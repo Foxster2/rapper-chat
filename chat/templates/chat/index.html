@@ -1166,7 +1166,7 @@
     }
 
     /* New Chat from sidebar */
-    document.getElementById('nav-new-chat-welcome').addEventListener('click', createNewChat);
+    document.getElementById('nav-new-chat-welcome').addEventListener('click', () => createNewChat());
 
     async function createNewChat(prefillText = '') {
         const title = prompt('Name this chat:', 'New Chat');
