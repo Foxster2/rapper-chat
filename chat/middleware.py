@@ -3,7 +3,6 @@ import time
 import jwt
 import requests
 from jwt.algorithms import RSAAlgorithm
-from django.http import JsonResponse
 from django.conf import settings
 from django.utils.deprecation import MiddlewareMixin
 
@@ -41,18 +40,23 @@ class ClerkJWTMiddleware(MiddlewareMixin):
         """Processes each request before it matches a Django view."""
         request.clerk_user_id = None
 
-        auth_header = request.headers.get('Authorization')
-        token = None
-
-        if auth_header and auth_header.startswith('Bearer '):
-            token = auth_header.split(' ', 1)[1]
+        # clerk-js sets a short-lived, auto-refreshed __session JWT cookie on our origin.
+        # All app requests are same-origin — including header-less SSE/EventSource, which
+        # can't send an Authorization header — so we authenticate from this cookie alone.
+        token = request.COOKIES.get('__session')
 
         if not token:
             return None
 
+        # This middleware only *attempts* authentication — it never returns an error
+        # response. Enforcement is the @require_clerk_auth decorator's job. This matters
+        # for cookie auth: the browser sends __session on *every* request (including the
+        # page load that boots clerk-js to refresh it), so a hard-fail on an expired
+        # cookie would deadlock the very page that could renew it. On any failure we
+        # simply leave request.clerk_user_id as None and let the request proceed.
         jwks = self.get_jwks()
         if not jwks:
-            return JsonResponse({'error': 'Unable to retrieve Clerk JWKS public keys'}, status=500)
+            return None
 
         try:
             header = jwt.get_unverified_header(token)
@@ -64,7 +68,7 @@ class ClerkJWTMiddleware(MiddlewareMixin):
                 public_jwk = self._find_key(jwks, kid) if jwks else None
 
             if not public_jwk:
-                return JsonResponse({'error': 'Invalid key identifier'}, status=401)
+                return None
 
             public_key = RSAAlgorithm.from_jwk(json.dumps(public_jwk))
 
@@ -78,9 +82,9 @@ class ClerkJWTMiddleware(MiddlewareMixin):
 
             request.clerk_user_id = payload.get('sub')
 
-        except jwt.ExpiredSignatureError:
-            return JsonResponse({'error': 'Token has expired'}, status=401)
-        except jwt.InvalidTokenError as e:
-            return JsonResponse({'error': f'Invalid token: {str(e)}'}, status=401)
+        except jwt.InvalidTokenError:
+            # Covers expired/malformed/invalid-signature tokens (ExpiredSignatureError
+            # is a subclass). Stay unauthenticated rather than blocking the request.
+            pass
 
         return None
