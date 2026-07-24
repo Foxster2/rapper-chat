@@ -1,0 +1,17 @@
+{% comment %}
+Assistant bubble that streams via SSE. htmx opens an EventSource to stream_reply;
+`token` events append text into .stream-tokens, and the final `done` event replaces
+the whole content with server-rendered markdown HTML and closes the connection.
+{% endcomment %}
+<div class="message-row assistant" hx-ext="sse"
+     sse-connect="/api/conversations/{{ conversation.id }}/stream/" sse-close="done">
+    <div class="assistant-meta">
+        <div class="assistant-avatar">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+        </div>
+        <span>AI</span>
+    </div>
+    <div class="assistant-content" sse-swap="done" hx-swap="innerHTML">
+        <span class="stream-tokens" sse-swap="token" hx-swap="beforeend"></span><span class="stream-cursor">▍</span>
+    </div>
+</div>

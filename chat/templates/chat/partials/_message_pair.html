@@ -1,0 +1,5 @@
+{% comment %}Returned by create_message: the user's new message + a streaming reply.{% endcomment %}
+<div class="message-row user">
+    <div class="user-bubble">{{ content }}</div>
+</div>
+{% include 'chat/partials/_streaming_reply.html' %}

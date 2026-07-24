@@ -1,0 +1,39 @@
+{% comment %}
+Full main-pane content for one conversation: topbar + message list + input.
+Swapped into #chat-view by htmx when a conversation is selected or created.
+{% endcomment %}
+<div class="chat-topbar visible">
+    <div class="breadcrumb">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        <span class="breadcrumb-sep">/</span>
+        <span class="breadcrumb-title">{{ conversation.title }}</span>
+    </div>
+</div>
+
+<div id="messages-container">
+    {% for message in messages %}{% include 'chat/partials/_message.html' %}{% endfor %}
+    {% if pending %}{% include 'chat/partials/_streaming_reply.html' %}{% endif %}
+</div>
+
+<div class="input-area visible">
+    <form class="input-card"
+          hx-post="/api/conversations/{{ conversation.id }}/messages/"
+          hx-target="#messages-container" hx-swap="beforeend"
+          hx-on::after-request="if(event.detail.successful){ this.reset(); this.querySelector('textarea').style.height='auto'; }">
+        <textarea name="content" class="autosize" placeholder="Ask anything…" rows="1" required></textarea>
+        <div class="input-actions-bar">
+            <div class="input-actions-right">
+                <button type="submit" class="send-btn">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+                </button>
+            </div>
+        </div>
+    </form>
+</div>
+
+{% if refresh_list %}
+{% comment %}Out-of-band sidebar refresh (used when a new conversation is created).{% endcomment %}
+<div id="conversations-list" hx-swap-oob="innerHTML">
+    {% include 'chat/partials/_conversation_list.html' %}
+</div>
+{% endif %}
