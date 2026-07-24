@@ -2,32 +2,28 @@
 Full main-pane content for one conversation: topbar + message list + input.
 Swapped into #chat-view by htmx when a conversation is selected or created.
 {% endcomment %}
-<div class="chat-topbar visible">
-    <div class="breadcrumb">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-        <span class="breadcrumb-sep">/</span>
-        <span class="breadcrumb-title">{{ conversation.title }}</span>
+<div class="flex items-center h-13 px-4 py-3 border-b border-base-300 shrink-0">
+    <div class="flex items-center gap-2 text-sm text-base-content/50 min-w-0">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        <span class="text-base-content/30">/</span>
+        <span class="breadcrumb-title font-medium text-base-content truncate">{{ conversation.title }}</span>
     </div>
 </div>
 
-<div id="messages-container">
+<div id="messages-container" class="flex-1 overflow-y-auto py-6 flex flex-col gap-1">
     {% for message in messages %}{% include 'chat/partials/_message.html' %}{% endfor %}
     {% if pending %}{% include 'chat/partials/_streaming_reply.html' %}{% endif %}
 </div>
 
-<div class="input-area visible">
-    <form class="input-card"
+<div class="shrink-0 p-4">
+    <form class="mx-auto max-w-3xl flex items-end gap-2 rounded-2xl border border-base-300 bg-base-200 p-2 focus-within:border-primary transition-colors"
           hx-post="/api/conversations/{{ conversation.id }}/messages/"
           hx-target="#messages-container" hx-swap="beforeend"
           hx-on::after-request="if(event.detail.successful){ this.reset(); this.querySelector('textarea').style.height='auto'; }">
-        <textarea name="content" class="autosize" placeholder="Ask anything…" rows="1" required></textarea>
-        <div class="input-actions-bar">
-            <div class="input-actions-right">
-                <button type="submit" class="send-btn">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
-                </button>
-            </div>
-        </div>
+        <textarea name="content" class="autosize textarea textarea-ghost flex-1 resize-none min-h-[40px] max-h-40 bg-transparent focus:outline-none px-2" rows="1" placeholder="Ask anything…" required></textarea>
+        <button type="submit" class="btn btn-primary btn-sm btn-circle">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+        </button>
     </form>
 </div>
 

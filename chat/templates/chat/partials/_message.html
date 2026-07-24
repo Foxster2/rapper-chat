@@ -1,16 +1,15 @@
 {% comment %}One stored message. Assistant content is pre-rendered markdown HTML.{% endcomment %}
 {% if message.role == 'user' %}
-<div class="message-row user">
-    <div class="user-bubble">{{ message.content }}</div>
+<div class="chat chat-end max-w-3xl mx-auto w-full px-4">
+    <div class="chat-bubble chat-bubble-primary">{{ message.content }}</div>
 </div>
 {% else %}
-<div class="message-row assistant">
-    <div class="assistant-meta">
-        <div class="assistant-avatar">
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+<div class="chat chat-start max-w-3xl mx-auto w-full px-4">
+    <div class="chat-image">
+        <div class="w-8 h-8 rounded-full bg-primary/20 text-primary flex items-center justify-center">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
         </div>
-        <span>AI</span>
     </div>
-    <div class="assistant-content">{{ message.content_html|safe }}</div>
+    <div class="chat-bubble assistant-content">{{ message.content_html|safe }}</div>
 </div>
 {% endif %}
