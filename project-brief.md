@@ -40,7 +40,7 @@ A quick-and-dirty v1 of an AI chatbot wrapper (like the many "AI wrapper" produc
 No SSE — the browser just waits for the JSON response and renders it.
 
 ## Explicit non-goals for v1
-- No streaming (SSE)
+- ~~No streaming (SSE)~~ — **implemented in Day 2** (token-by-token streaming via SSE)
 - No pixel-perfect UI (Figma kit is a wireframe reference only)
 - No production-grade auth hardening beyond basic Clerk JWT verification
 - No paid OpenRouter models
@@ -50,3 +50,11 @@ No SSE — the browser just waits for the JSON response and renders it.
 - Build iteratively — get a working v1 end to end (auth → chat → LLM response → persisted history) before polishing anything
 - Keep the OpenRouter model ID and API key in environment variables, never hardcoded
 - Favor the simplest implementation that works over "correct" architecture — this will be revised after feedback
+
+## Day 2 updates
+Layered onto the v1 above (see `day2-plan.md` for full detail):
+- **SSE streaming** — replies stream token-by-token. `create_message` saves the user turn and returns a message pair whose assistant bubble opens an `EventSource` to `stream_reply`, which emits `token` events then a final `done` event with server-rendered markdown.
+- **Auth** — switched to cookie-only via Clerk's `__session` cookie (so header-less `EventSource`/htmx requests authenticate too). The middleware is attempt-only and never hard-fails; `@require_clerk_auth` enforces.
+- **Frontend** — rebuilt on **htmx + Alpine + htmx-sse**: server-rendered partials, no vanilla-JS fetch layer. Alpine owns shell state (welcome↔chat, theme); a small delegated-JS layer covers the actions popover, autosize, Enter-to-send, highlight and autoscroll.
+- **UI** — reskinned with **daisyUI** (v4 full CSS + Tailwind Play CDN, no build step); the hand-rolled cream/puddle CSS was retired. Added animations (message entrance, thinking dots → streaming cursor, theme crossfade, press feedback), all gated by `prefers-reduced-motion`.
+- Still dev/localhost on `runserver`; an ASGI move (uvicorn) is deferred to a production pass.

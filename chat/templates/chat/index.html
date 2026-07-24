@@ -28,9 +28,21 @@
         /* Chat pane container (htmx swaps topbar + messages + input in here) */
         #chat-view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
-        /* Streaming cursor shown while tokens arrive */
+        /* Streaming cursor shown while tokens arrive (hidden while the thinking dots show) */
         .stream-cursor { display: inline-block; width: 0.5ch; animation: blink 1s step-start infinite; }
         @keyframes blink { 50% { opacity: 0; } }
+        .assistant-content:has(.thinking) .stream-cursor { display: none; }
+
+        /* Message entrance: fade + slide up */
+        .chat { animation: msg-in 0.28s ease both; }
+        @keyframes msg-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+        /* Button press feedback */
+        .btn { transition: transform 0.08s ease, background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease; }
+        .btn:active { transform: scale(0.96); }
+
+        /* htmx in-flight: fade the conversation item being opened */
+        .conversation-item.htmx-request { opacity: 0.55; }
 
         /* Assistant markdown (no typography plugin — colors inherit from the bubble) */
         .assistant-content :where(h1, h2, h3) { font-weight: 600; line-height: 1.3; margin: 0.6em 0 0.3em; }
@@ -97,8 +109,8 @@
                 <span id="username-display" class="text-sm font-medium text-base-content/80 truncate"></span>
             </div>
             <button class="btn btn-ghost btn-sm btn-circle" title="Toggle theme" @click="toggleTheme()">
-                <svg x-show="theme === 'dark'" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-                <svg x-show="theme === 'light'" x-cloak width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+                <svg x-show="theme === 'dark'" x-transition.opacity.duration.200ms width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+                <svg x-show="theme === 'light'" x-cloak x-transition.opacity.duration.200ms width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
             </button>
         </div>
     </aside>
@@ -107,7 +119,7 @@
     <main class="flex flex-col h-screen overflow-hidden bg-base-100">
 
         <!-- WELCOME STATE (shown when no conversation is active) -->
-        <div id="welcome-view" x-show="!activeId" class="flex-1 flex flex-col items-center justify-center p-6 text-center">
+        <div id="welcome-view" x-show="!activeId" x-transition.opacity.duration.250ms class="flex-1 flex flex-col items-center justify-center p-6 text-center">
             <p class="serif text-4xl text-base-content mb-1">Hey <em id="welcome-name" class="italic text-base-content/70">there</em>,</p>
             <p class="serif text-2xl text-base-content/60 mb-8">What can I help you with today?</p>
 
@@ -274,6 +286,10 @@
     /* Autoscroll + re-highlight after htmx swaps and SSE token events */
     document.body.addEventListener('htmx:afterSwap', (e) => {
         if (e.target && e.target.id === 'conversations-list') highlightActive();
+        /* First streamed token arrived → drop the "thinking" dots for that bubble */
+        if (e.target && e.target.classList && e.target.classList.contains('stream-tokens')) {
+            e.target.parentElement.querySelector('.thinking')?.remove();
+        }
         scrollMessages();
     });
     document.body.addEventListener('htmx:sseMessage', scrollMessages);
