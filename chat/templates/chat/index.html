@@ -28,6 +28,10 @@
         /* Chat pane container (htmx swaps topbar + messages + input in here) */
         #chat-view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
+        /* Raw tokens land here before the final markdown render — keep their line
+           breaks instead of collapsing the reply into one blob of text */
+        .stream-tokens { white-space: pre-wrap; }
+
         /* Streaming cursor shown while tokens arrive (hidden while the thinking dots show) */
         .stream-cursor { display: inline-block; width: 0.5ch; animation: blink 1s step-start infinite; }
         @keyframes blink { 50% { opacity: 0; } }

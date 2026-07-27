@@ -1,5 +1,6 @@
 import json
 import markdown  # server-side markdown -> HTML for the final rendered reply
+import nh3  # HTML sanitizer applied to the rendered markdown before it reaches the browser
 from django.shortcuts import render
 from django.http import (
     JsonResponse, StreamingHttpResponse, QueryDict,
@@ -55,9 +56,24 @@ def sse_frame(event, data):
     return f'event: {event}\n{body}\n'
 
 
+# nh3's defaults already cover every tag the markdown extensions emit; we only add
+# back `class` on code blocks so fenced_code's language hint survives sanitizing.
+ALLOWED_ATTRIBUTES = {
+    **nh3.ALLOWED_ATTRIBUTES,
+    'code': {'class'},
+    'pre': {'class'},
+}
+
+
 def render_markdown(text):
-    """Render the assistant's markdown reply to HTML for final display."""
-    return markdown.markdown(text, extensions=['fenced_code', 'tables'])
+    """Render the assistant's markdown reply to HTML for final display.
+
+    The model's output is untrusted, so the generated HTML is sanitized before it
+    reaches the browser — raw <script>/<iframe> tags and inline event handlers
+    (onerror=, onload=, ...) are stripped rather than executed.
+    """
+    html = markdown.markdown(text, extensions=['fenced_code', 'tables'])
+    return nh3.clean(html, attributes=ALLOWED_ATTRIBUTES)
 
 
 def require_clerk_auth(view_func):
@@ -238,6 +254,10 @@ def stream_reply(request, conversation_id):
         except Exception as e:
             print(f"LangChain/OpenRouter streaming error: {e}")
             yield sse_frame('error', str(e))
+            # Always close with `done` too: the bubble's sse-close="done" is what stops
+            # EventSource from auto-reconnecting and re-hitting the API in a loop.
+            # The payload replaces the bubble, so surface the failure there.
+            yield sse_frame('done', '<p class="text-error">Sorry — the reply failed to generate. Please try again.</p>')
             return
 
         # Persist the full reply, bump updated_at, and send the rendered HTML.
