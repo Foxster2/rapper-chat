@@ -22,3 +22,6 @@ Thumbs.db
 
 # Docker logs
 *.log
+
+# Internal planning & brainstorming docs
+project-brief.md
