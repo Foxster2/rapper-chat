@@ -1,0 +1,105 @@
+[x-cloak] { display: none !important; }
+
+/* Custom color scheme, overriding daisyUI's built-in light/dark theme variables.
+   daisyUI v4 composes these as oklch(var(--p)/1) etc., so each value must be a
+   raw "L% C H" OKLCH triplet (no wrapper) — converted from the hex palette. */
+[data-theme="light"] {
+    --p: 72.04% 0.1473 60.67;   --pc: 15.28% 0.02511 74.28;   /* primary */
+    --s: 57.73% 0.1067 137.2;   --sc: 97.42% 0.01367 67.67;   /* secondary */
+    --a: 82.44% 0.2161 146.7;   --ac: 15.28% 0.02511 74.28;   /* accent */
+    --n: 89.5% 0.01222 67.67;   --nc: 15.28% 0.02511 74.28;   /* neutral */
+    --b1: 98.18% 0.01129 71.9;                                /* base-100 */
+    --b2: 93.98% 0.01141 71.9;                                /* base-200 */
+    --b3: 89.5% 0.01222 67.67;                                /* base-300 */
+    --bc: 15.28% 0.02511 74.28;                               /* base-content */
+}
+[data-theme="dark"] {
+    --p: 64.22% 0.1449 58.5;    --pc: 97.42% 0.01367 67.67;
+    --s: 72.3% 0.1047 137;      --sc: 15.28% 0.02511 74.28;
+    --a: 67.66% 0.2072 144.9;   --ac: 97.42% 0.01367 67.67;
+    --n: 26.59% 0.01643 67.02;  --nc: 97.42% 0.01367 67.67;
+    --b1: 13.97% 0.02446 82.11;
+    --b2: 20.51% 0.01637 71.02;
+    --b3: 26.59% 0.01643 67.02;
+    --bc: 97.42% 0.01367 67.67;
+}
+
+body { font-family: 'Inter', system-ui, sans-serif; }
+.serif { font-family: 'Playfair Display', serif !important; }
+
+/* Chat pane container (htmx swaps topbar + messages + input in here) */
+#chat-view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+/* Topbar overlay fade — an eased alpha curve (not a straight linear fade)
+   so messages dissolve smoothly as they scroll underneath instead of
+   hitting a visible edge. Solid until ~45%, then eases out to fully
+   transparent by 100%. */
+.topbar-fade {
+    background: linear-gradient(to bottom,
+        oklch(var(--b1)) 0%,
+        oklch(var(--b1)) 45%,
+        oklch(var(--b1) / 0.85) 58.4%,
+        oklch(var(--b1) / 0.65) 66.6%,
+        oklch(var(--b1) / 0.46) 73.4%,
+        oklch(var(--b1) / 0.31) 79%,
+        oklch(var(--b1) / 0.20) 83.4%,
+        oklch(var(--b1) / 0.12) 87.1%,
+        oklch(var(--b1) / 0.07) 90.2%,
+        oklch(var(--b1) / 0.03) 92.6%,
+        oklch(var(--b1) / 0.01) 93.8%,
+        oklch(var(--b1) / 0) 100%);
+}
+
+/* Raw tokens land here before the final markdown render — keep their line
+   breaks instead of collapsing the reply into one blob of text */
+.stream-tokens { white-space: pre-wrap; }
+
+/* Streaming cursor shown while tokens arrive (hidden while the thinking dots show) */
+.stream-cursor { display: inline-block; width: 0.5ch; animation: blink 1s step-start infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+.assistant-content:has(.thinking) .stream-cursor { display: none; }
+
+/* Message entrance: fade + slide up */
+.chat { animation: msg-in 0.28s ease both; }
+@keyframes msg-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+/* Button press feedback */
+.btn { transition: transform 0.08s ease, background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease; }
+.btn:active { transform: scale(0.96); }
+
+/* htmx in-flight: fade the conversation item being opened */
+.conversation-item.htmx-request { opacity: 0.55; }
+
+/* Assistant markdown (no typography plugin — colors inherit from the bubble) */
+.assistant-content :where(h1, h2, h3) { font-weight: 600; line-height: 1.3; margin: 0.6em 0 0.3em; }
+.assistant-content h1 { font-size: 1.35em; }
+.assistant-content h2 { font-size: 1.2em; }
+.assistant-content h3 { font-size: 1.05em; }
+.assistant-content p { margin: 0.5em 0; }
+.assistant-content p:first-child { margin-top: 0; }
+.assistant-content p:last-child { margin-bottom: 0; }
+.assistant-content ul { list-style: disc; margin: 0.5em 0 0.5em 1.25em; }
+.assistant-content ol { list-style: decimal; margin: 0.5em 0 0.5em 1.25em; }
+.assistant-content li { margin: 0.2em 0; }
+.assistant-content a { text-decoration: underline; }
+.assistant-content code { font-family: 'IBM Plex Mono', monospace; font-size: 0.85em; background: hsl(0 0% 50% / 0.18); padding: 0.1em 0.35em; border-radius: 0.25rem; }
+.assistant-content pre { background: hsl(0 0% 50% / 0.14); padding: 0.8em 1em; border-radius: 0.5rem; overflow-x: auto; margin: 0.6em 0; }
+.assistant-content pre code { background: none; padding: 0; }
+
+/* Thin scrollbars */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: hsl(0 0% 50% / 0.3); border-radius: 99px; }
+
+/* Reserve the scrollbar's gutter so centered content (mx-auto bubbles) doesn't
+   shift sideways when the message list crosses the overflow threshold */
+#messages-container { scrollbar-gutter: stable; }
+
+/* Sidebar collapses via width, not display, so the transition can animate;
+   the fixed-width inner wrapper keeps its contents from reflowing/wrapping
+   while the outer width is shrinking */
+#sidebar { transition: width 0.25s ease; }
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
+}
