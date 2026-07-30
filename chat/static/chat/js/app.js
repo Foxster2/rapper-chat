@@ -6,6 +6,7 @@ function chat() {
         activeId: null,
         theme: 'dark',
         sidebarOpen: true,
+        searchOpen: false,
         init() {
             this.theme = localStorage.getItem('theme') || 'dark';
             document.documentElement.dataset.theme = this.theme;
@@ -55,6 +56,28 @@ function autosize(el) {
 function scrollMessages() {
     const c = document.getElementById('messages-container');
     if (c) c.scrollTop = c.scrollHeight;
+}
+
+/* Search overlay results: rebuilt from the sidebar's already-loaded
+   conversation-item list (title + id) each time the overlay opens or the
+   query changes — no backend call. Titles are re-escaped before going back
+   into innerHTML since they're read via textContent (plain text) here. */
+function renderSearchResults(query) {
+    const q = query.trim().toLowerCase();
+    const results = document.getElementById('search-results');
+    const matches = Array.from(document.querySelectorAll('#conversations-list .conversation-item'))
+        .map(el => ({ id: el.dataset.id, title: el.querySelector('.chat-title-span')?.textContent || '' }))
+        .filter(c => !q || c.title.toLowerCase().includes(q));
+
+    results.innerHTML = matches.length
+        ? matches.map(c => `<button type="button" class="search-result-item block w-full text-left truncate rounded-lg px-3 py-2 text-sm hover:bg-base-300" data-id="${c.id}">${escapeHtml(c.title)}</button>`).join('')
+        : '<p class="px-3 py-2 text-xs text-base-content/50">No matching chats</p>';
+}
+
+function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
 }
 
 /* Active conversation gets the theme's secondary-color highlight */
@@ -116,6 +139,12 @@ function deleteChat(id) {
 document.addEventListener('click', (e) => {
     const btn = e.target.closest('.chat-actions-btn');
     if (btn) { e.stopPropagation(); e.preventDefault(); showChatMenu(btn); }
+
+    const result = e.target.closest('.search-result-item');
+    if (result) {
+        htmx.ajax('GET', `/api/conversations/${result.dataset.id}/pane/`, { target: '#chat-view', swap: 'innerHTML' });
+        Alpine.$data(document.getElementById('app-container')).searchOpen = false;
+    }
 });
 document.addEventListener('input', (e) => {
     if (e.target.matches('textarea.autosize')) autosize(e.target);

@@ -1,13 +1,14 @@
-import json
 import markdown  # server-side markdown -> HTML for the final rendered reply
 import nh3  # HTML sanitizer applied to the rendered markdown before it reaches the browser
-from django.shortcuts import render
+from django.shortcuts import render, redirect
 from django.http import (
-    JsonResponse, StreamingHttpResponse, QueryDict,
+    HttpResponse, JsonResponse, StreamingHttpResponse, QueryDict,
     HttpResponseBadRequest, HttpResponseNotFound, HttpResponseNotAllowed,
 )
 from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
+from django_cotton import render_component
+from django_htmx.http import trigger_client_event
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage
@@ -111,10 +112,10 @@ def _rendered_messages(conversation):
 
 def _list_partial(request, active_id=None):
     """Render the sidebar conversation list (an htmx-swappable partial)."""
-    return render(request, 'chat/partials/_conversation_list.html', {
-        'conversations': _user_conversations(request),
-        'active_id': active_id,
-    })
+    return HttpResponse(render_component(request, 'conversation-list',
+        conversations=_user_conversations(request),
+        active_id=active_id,
+    ))
 
 
 def index(request):
@@ -127,6 +128,8 @@ def index(request):
 @require_clerk_auth
 def conversations_partial(request):
     """GET: the sidebar list, loaded by htmx once Clerk is ready."""
+    if not request.htmx:
+        return redirect('index')
     return _list_partial(request)
 
 
@@ -156,28 +159,31 @@ def conversation_detail(request, conversation_id):
 
 def _pane_response(request, conversation, refresh_list=False):
     """Render the chat pane (topbar + messages + input) for a conversation, telling
-    the client which conversation is now active via HX-Trigger. Optionally piggybacks
-    an out-of-band refresh of the sidebar list (used when a new chat is created)."""
+    the client which conversation is now active via a conversation-active client
+    event. Optionally piggybacks an out-of-band refresh of the sidebar list (used
+    when a new chat is created)."""
     last = conversation.messages.last()
-    context = {
-        'conversation': conversation,
-        'messages': _rendered_messages(conversation),
+    conversations = _user_conversations(request) if refresh_list else None
+    active_id = conversation.id if refresh_list else None
+    response = HttpResponse(render_component(request, 'chat-pane',
+        conversation=conversation,
+        messages=_rendered_messages(conversation),
         # If the latest turn is the user's, render an SSE-wired assistant bubble that
         # streams the pending reply as soon as the pane is inserted.
-        'pending': bool(last and last.role == 'user'),
-    }
-    if refresh_list:
-        context['refresh_list'] = True
-        context['conversations'] = _user_conversations(request)
-        context['active_id'] = conversation.id
-    response = render(request, 'chat/partials/_chat_pane.html', context)
-    response['HX-Trigger'] = json.dumps({'conversation-active': {'id': conversation.id}})
+        pending=bool(last and last.role == 'user'),
+        refresh_list=refresh_list,
+        conversations=conversations,
+        active_id=active_id,
+    ))
+    trigger_client_event(response, 'conversation-active', {'id': conversation.id})
     return response
 
 
 @require_clerk_auth
 def conversation_pane(request, conversation_id):
     """GET: the chat pane for an existing conversation (selected from the sidebar)."""
+    if not request.htmx:
+        return redirect('index')
     try:
         conversation = Conversation.objects.get(id=conversation_id, owner=request.clerk_user_id)
     except Conversation.DoesNotExist:
@@ -223,10 +229,10 @@ def create_message(request, conversation_id):
         return HttpResponseBadRequest('Content cannot be empty')
 
     Message.objects.create(conversation=conversation, role='user', content=content)
-    return render(request, 'chat/partials/_message_pair.html', {
-        'conversation': conversation,
-        'content': content,
-    })
+    return HttpResponse(render_component(request, 'message-pair',
+        conversation=conversation,
+        content=content,
+    ))
 
 
 @require_clerk_auth

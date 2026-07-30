@@ -1,8 +1,10 @@
-django                                                           
-python-dotenv                                                    
-langchain                                                        
-langchain-openai                                                 
+django
+python-dotenv
+langchain
+langchain-openai
 pyjwt[crypto]
 requests
 markdown
 nh3
+django-htmx
+django-cotton

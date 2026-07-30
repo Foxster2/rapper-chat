@@ -1,3 +1,4 @@
+<c-vars conversation messages pending refresh_list conversations active_id />
 {% comment %}
 Full main-pane content for one conversation: topbar + message list + input.
 Swapped into #chat-view by htmx when a conversation is selected or created.
@@ -19,8 +20,8 @@ Swapped into #chat-view by htmx when a conversation is selected or created.
     </div>
 
     <div id="messages-container" class="flex-1 overflow-y-auto pt-14 pb-6 flex flex-col gap-1">
-        {% for message in messages %}{% include 'chat/partials/_message.html' %}{% endfor %}
-        {% if pending %}{% include 'chat/partials/_streaming_reply.html' %}{% endif %}
+        {% for message in messages %}<c-message :message="message" />{% endfor %}
+        {% if pending %}<c-streaming-reply :conversation="conversation" />{% endif %}
     </div>
 </div>
 
@@ -39,6 +40,6 @@ Swapped into #chat-view by htmx when a conversation is selected or created.
 {% if refresh_list %}
 {% comment %}Out-of-band sidebar refresh (used when a new conversation is created).{% endcomment %}
 <div id="conversations-list" hx-swap-oob="innerHTML">
-    {% include 'chat/partials/_conversation_list.html' %}
+    <c-conversation-list :conversations="conversations" :active_id="active_id" />
 </div>
 {% endif %}

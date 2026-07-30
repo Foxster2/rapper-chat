@@ -46,7 +46,8 @@
                 </button>
             </div>
             <div class="px-3 flex flex-col gap-1">
-                <button class="btn btn-sm btn-ghost justify-start gap-2 font-normal">
+                <button class="btn btn-sm btn-ghost justify-start gap-2 font-normal"
+                        @click="searchOpen = true; $nextTick(() => { $refs.searchInput.value = ''; renderSearchResults(''); $refs.searchInput.focus(); })">
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
                     Search
                 </button>
@@ -129,6 +130,26 @@
         <div id="chat-view" x-show="activeId" x-cloak></div>
 
     </main>
+
+    <!-- SEARCH OVERLAY: quick-jump to any chat by title. Results are built
+         client-side from the sidebar's already-loaded conversation-item list,
+         no backend call. -->
+    <div x-show="searchOpen" x-cloak x-transition.opacity.duration.150ms
+         class="fixed inset-0 z-50 flex items-start justify-center pt-[15vh] bg-black/40"
+         @click.self="searchOpen = false" @keydown.escape.window="searchOpen = false">
+        <div class="w-full max-w-lg mx-4 bg-base-100 border border-base-300 rounded-2xl shadow-xl overflow-hidden">
+            <div class="flex items-center gap-2 px-4 py-3 border-b border-base-300">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-base-content/50 shrink-0"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <input x-ref="searchInput" type="text" placeholder="Search chats…"
+                       class="flex-1 bg-transparent focus:outline-none text-sm"
+                       @input="renderSearchResults($event.target.value)">
+                <button type="button" class="btn btn-ghost btn-xs btn-circle shrink-0" title="Close" @click="searchOpen = false">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+            <div id="search-results" class="max-h-80 overflow-y-auto p-2"></div>
+        </div>
+    </div>
 </div>
 
 <!-- ════════════════════════ SCRIPTS ════════════════════════════════ -->

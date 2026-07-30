@@ -1,0 +1,10 @@
+<c-vars conversations active_id />
+{% comment %}
+Sidebar conversation list. Each item loads its chat pane via htmx; the server's
+HX-Trigger then marks it active. The "⋯" button opens a JS popover (rename/delete).
+{% endcomment %}
+{% for c in conversations %}
+<c-conversation-item :c="c" :active_id="active_id" />
+{% empty %}
+<p class="px-3 py-2 text-xs text-base-content/50">No chats yet</p>
+{% endfor %}

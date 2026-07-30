@@ -1,8 +1,4 @@
-{% comment %}
-Sidebar conversation list. Each item loads its chat pane via htmx; the server's
-HX-Trigger then marks it active. The "⋯" button opens a JS popover (rename/delete).
-{% endcomment %}
-{% for c in conversations %}
+<c-vars c active_id />
 <div class="conversation-item group flex items-center gap-1 rounded-lg px-3 py-2 text-sm cursor-pointer transition-colors hover:bg-base-300{% if c.id == active_id %} bg-secondary/15 text-secondary{% endif %}"
      data-id="{{ c.id }}"
      hx-get="/api/conversations/{{ c.id }}/pane/" hx-target="#chat-view" hx-swap="innerHTML">
@@ -12,6 +8,3 @@ HX-Trigger then marks it active. The "⋯" button opens a JS popover (rename/del
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
     </button>
 </div>
-{% empty %}
-<p class="px-3 py-2 text-xs text-base-content/50">No chats yet</p>
-{% endfor %}
