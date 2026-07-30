@@ -93,10 +93,18 @@ def _rendered_messages(conversation):
     """Stored messages ready for templating — assistant turns pre-rendered to HTML."""
     items = []
     for m in conversation.messages.all():
+        html = ''
+        if m.role == 'assistant':
+            if not m.content_html:
+                # Backfills rows saved before content_html existed; new rows are
+                # already populated by stream_reply and skip straight past this.
+                m.content_html = render_markdown(m.content)
+                m.save(update_fields=['content_html'])
+            html = m.content_html
         items.append({
             'role': m.role,
             'content': m.content,
-            'content_html': render_markdown(m.content) if m.role == 'assistant' else '',
+            'content_html': html,
         })
     return items
 
@@ -260,11 +268,13 @@ def stream_reply(request, conversation_id):
             yield sse_frame('done', '<p class="text-error">Sorry — the reply failed to generate. Please try again.</p>')
             return
 
-        # Persist the full reply, bump updated_at, and send the rendered HTML.
+        # Persist the full reply (with its rendered HTML, so future pane loads
+        # don't re-run markdown/sanitization), bump updated_at, and send the HTML.
         full = ''.join(collected)
-        Message.objects.create(conversation=conversation, role='assistant', content=full)
+        full_html = render_markdown(full)
+        Message.objects.create(conversation=conversation, role='assistant', content=full, content_html=full_html)
         conversation.save()
-        yield sse_frame('done', render_markdown(full))
+        yield sse_frame('done', full_html)
 
     response = StreamingHttpResponse(event_stream(), content_type='text/event-stream')
     response['Cache-Control'] = 'no-cache'

@@ -3,7 +3,7 @@ Sidebar conversation list. Each item loads its chat pane via htmx; the server's
 HX-Trigger then marks it active. The "⋯" button opens a JS popover (rename/delete).
 {% endcomment %}
 {% for c in conversations %}
-<div class="conversation-item group flex items-center gap-1 rounded-lg px-3 py-2 text-sm cursor-pointer transition-colors hover:bg-base-300{% if c.id == active_id %} bg-base-300{% endif %}"
+<div class="conversation-item group flex items-center gap-1 rounded-lg px-3 py-2 text-sm cursor-pointer transition-colors hover:bg-base-300{% if c.id == active_id %} bg-secondary/15 text-secondary{% endif %}"
      data-id="{{ c.id }}"
      hx-get="/api/conversations/{{ c.id }}/pane/" hx-target="#chat-view" hx-swap="innerHTML">
     <span class="chat-title-span flex-1 truncate">{{ c.title }}</span>

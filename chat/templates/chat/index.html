@@ -22,11 +22,55 @@
     <style>
         [x-cloak] { display: none !important; }
 
+        /* Custom color scheme, overriding daisyUI's built-in light/dark theme variables.
+           daisyUI v4 composes these as oklch(var(--p)/1) etc., so each value must be a
+           raw "L% C H" OKLCH triplet (no wrapper) — converted from the hex palette. */
+        [data-theme="light"] {
+            --p: 72.04% 0.1473 60.67;   --pc: 15.28% 0.02511 74.28;   /* primary */
+            --s: 57.73% 0.1067 137.2;   --sc: 97.42% 0.01367 67.67;   /* secondary */
+            --a: 82.44% 0.2161 146.7;   --ac: 15.28% 0.02511 74.28;   /* accent */
+            --n: 89.5% 0.01222 67.67;   --nc: 15.28% 0.02511 74.28;   /* neutral */
+            --b1: 98.18% 0.01129 71.9;                                /* base-100 */
+            --b2: 93.98% 0.01141 71.9;                                /* base-200 */
+            --b3: 89.5% 0.01222 67.67;                                /* base-300 */
+            --bc: 15.28% 0.02511 74.28;                               /* base-content */
+        }
+        [data-theme="dark"] {
+            --p: 64.22% 0.1449 58.5;    --pc: 97.42% 0.01367 67.67;
+            --s: 72.3% 0.1047 137;      --sc: 15.28% 0.02511 74.28;
+            --a: 67.66% 0.2072 144.9;   --ac: 97.42% 0.01367 67.67;
+            --n: 26.59% 0.01643 67.02;  --nc: 97.42% 0.01367 67.67;
+            --b1: 13.97% 0.02446 82.11;
+            --b2: 20.51% 0.01637 71.02;
+            --b3: 26.59% 0.01643 67.02;
+            --bc: 97.42% 0.01367 67.67;
+        }
+
         body { font-family: 'Inter', system-ui, sans-serif; }
         .serif { font-family: 'Playfair Display', serif !important; }
 
         /* Chat pane container (htmx swaps topbar + messages + input in here) */
         #chat-view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+        /* Topbar overlay fade — an eased alpha curve (not a straight linear fade)
+           so messages dissolve smoothly as they scroll underneath instead of
+           hitting a visible edge. Solid until ~45%, then eases out to fully
+           transparent by 100%. */
+        .topbar-fade {
+            background: linear-gradient(to bottom,
+                oklch(var(--b1)) 0%,
+                oklch(var(--b1)) 45%,
+                oklch(var(--b1) / 0.85) 58.4%,
+                oklch(var(--b1) / 0.65) 66.6%,
+                oklch(var(--b1) / 0.46) 73.4%,
+                oklch(var(--b1) / 0.31) 79%,
+                oklch(var(--b1) / 0.20) 83.4%,
+                oklch(var(--b1) / 0.12) 87.1%,
+                oklch(var(--b1) / 0.07) 90.2%,
+                oklch(var(--b1) / 0.03) 92.6%,
+                oklch(var(--b1) / 0.01) 93.8%,
+                oklch(var(--b1) / 0) 100%);
+        }
 
         /* Raw tokens land here before the final markdown render — keep their line
            breaks instead of collapsing the reply into one blob of text */
@@ -69,6 +113,15 @@
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: hsl(0 0% 50% / 0.3); border-radius: 99px; }
 
+        /* Reserve the scrollbar's gutter so centered content (mx-auto bubbles) doesn't
+           shift sideways when the message list crosses the overflow threshold */
+        #messages-container { scrollbar-gutter: stable; }
+
+        /* Sidebar collapses via width, not display, so the transition can animate;
+           the fixed-width inner wrapper keeps its contents from reflowing/wrapping
+           while the outer width is shrinking */
+        #sidebar { transition: width 0.25s ease; }
+
         @media (prefers-reduced-motion: reduce) {
             *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
         }
@@ -83,47 +136,60 @@
 </div>
 
 <!-- ════════════════════════ APP SHELL ════════════════════════════ -->
-<div id="app-container" x-data="chat()" class="grid-cols-[260px_1fr] h-screen w-screen" style="display:none;">
+<div id="app-container" x-data="chat()" class="flex h-screen w-screen" style="display:none;">
 
     <!-- ── SIDEBAR ── -->
-    <aside class="flex flex-col h-screen bg-base-200 border-r border-base-300 overflow-hidden">
-        <div class="p-3 flex flex-col gap-1">
-            <button class="btn btn-sm btn-ghost justify-start gap-2 font-normal" @click="newChat()">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-                New Chat
-            </button>
-            <button class="btn btn-sm btn-ghost justify-start gap-2 font-normal">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                Search
-            </button>
-            <button class="btn btn-sm btn-ghost justify-start gap-2 font-normal">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>
-                Settings
-            </button>
-        </div>
-
-        <div class="px-3 pt-4 pb-1 text-xs font-semibold uppercase tracking-wide text-base-content/50">Chats</div>
-
-        <!-- Conversation list: htmx loads this once Clerk is ready -->
-        <div class="flex-1 overflow-y-auto px-2 pb-2" id="conversations-list"></div>
-
-        <div class="p-3 border-t border-base-300 flex items-center justify-between gap-2">
-            <div class="flex items-center gap-2 min-w-0">
-                <div id="user-button"></div>
-                <span id="username-display" class="text-sm font-medium text-base-content/80 truncate"></span>
+    <aside id="sidebar" class="h-screen shrink-0 overflow-hidden" :style="`width: ${sidebarOpen ? '260px' : '0px'}`">
+        <div class="flex flex-col h-screen w-[260px] bg-base-200 border-r border-base-300">
+            <div class="p-3 flex items-center justify-between gap-1">
+                <button class="btn btn-sm btn-ghost justify-start gap-2 font-normal flex-1" @click="newChat()">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                    New Chat
+                </button>
+                <button class="btn btn-ghost btn-sm btn-circle" title="Collapse sidebar" @click="toggleSidebar()">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+                </button>
             </div>
-            <button class="btn btn-ghost btn-sm btn-circle" title="Toggle theme" @click="toggleTheme()">
-                <svg x-show="theme === 'dark'" x-transition.opacity.duration.200ms width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-                <svg x-show="theme === 'light'" x-cloak x-transition.opacity.duration.200ms width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-            </button>
+            <div class="px-3 flex flex-col gap-1">
+                <button class="btn btn-sm btn-ghost justify-start gap-2 font-normal">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                    Search
+                </button>
+                <button class="btn btn-sm btn-ghost justify-start gap-2 font-normal">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>
+                    Settings
+                </button>
+            </div>
+
+            <div class="px-3 pt-4 pb-1 text-xs font-semibold uppercase tracking-wide text-base-content/50">Chats</div>
+
+            <!-- Conversation list: htmx loads this once Clerk is ready -->
+            <div class="flex-1 overflow-y-auto px-2 pb-2" id="conversations-list"></div>
+
+            <div class="p-3 border-t border-base-300 flex items-center justify-between gap-2">
+                <div class="flex items-center gap-2 min-w-0">
+                    <div id="user-button"></div>
+                    <span id="username-display" class="text-sm font-medium text-base-content/80 truncate"></span>
+                </div>
+                <button class="btn btn-ghost btn-sm btn-circle" title="Toggle theme" @click="toggleTheme()">
+                    <svg x-show="theme === 'dark'" x-transition.opacity.duration.200ms width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+                    <svg x-show="theme === 'light'" x-cloak x-transition.opacity.duration.200ms width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+                </button>
+            </div>
         </div>
     </aside>
 
     <!-- ── MAIN PANE ── -->
-    <main class="flex flex-col h-screen overflow-hidden bg-base-100">
+    <main class="relative flex flex-col h-screen flex-1 min-w-0 overflow-hidden bg-base-100">
+
+        <!-- Reopen button: shown only while the sidebar is collapsed -->
+        <button x-show="!sidebarOpen" x-cloak x-transition.opacity.duration.200ms
+                class="btn btn-ghost btn-sm btn-circle absolute top-3 left-3 z-20" title="Expand sidebar" @click="toggleSidebar()">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+        </button>
 
         <!-- WELCOME STATE (shown when no conversation is active) -->
-        <div id="welcome-view" x-show="!activeId" x-transition.opacity.duration.250ms class="flex-1 flex flex-col items-center justify-center p-6 text-center">
+        <div id="welcome-view" x-show="!activeId" x-transition.opacity.duration.250ms class="absolute inset-0 z-10 bg-base-100 flex flex-col items-center justify-center p-6 text-center">
             <p class="serif text-4xl text-base-content mb-1">Hey <em id="welcome-name" class="italic text-base-content/70">there</em>,</p>
             <p class="serif text-2xl text-base-content/60 mb-8">What can I help you with today?</p>
 
@@ -153,11 +219,11 @@
 
             <!-- WELCOME input: creates a new conversation from the first message -->
             <form id="welcome-form"
-                  class="w-full max-w-xl flex items-end gap-2 rounded-2xl border border-base-300 bg-base-200 p-2 focus-within:border-primary transition-colors"
+                  class="w-full max-w-xl flex items-center gap-2 rounded-2xl border border-base-300 bg-base-200 p-2 focus-within:border-primary transition-colors"
                   hx-post="/api/conversations/start/"
                   hx-target="#chat-view" hx-swap="innerHTML"
                   hx-on::after-request="if(event.detail.successful){ this.reset(); this.querySelector('textarea').style.height='auto'; }">
-                <textarea id="welcome-input" name="content" class="autosize textarea textarea-ghost flex-1 resize-none min-h-[40px] max-h-40 bg-transparent focus:outline-none px-2" rows="1" placeholder="Ask anything…" required></textarea>
+                <textarea id="welcome-input" name="content" class="autosize textarea textarea-ghost flex-1 resize-none overflow-hidden min-h-[40px] max-h-40 bg-transparent focus:outline-none px-2" rows="1" placeholder="Ask anything…" required></textarea>
                 <button type="submit" class="btn btn-primary btn-sm btn-circle">
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
                 </button>
@@ -179,9 +245,11 @@
         return {
             activeId: null,
             theme: 'dark',
+            sidebarOpen: true,
             init() {
                 this.theme = localStorage.getItem('theme') || 'dark';
                 document.documentElement.dataset.theme = this.theme;
+                this.sidebarOpen = localStorage.getItem('sidebarOpen') !== 'false';
                 /* The server tells us which conversation became active (select or start). */
                 window.addEventListener('conversation-active', (e) => {
                     this.activeId = e.detail.id;
@@ -194,6 +262,10 @@
                 this.theme = this.theme === 'dark' ? 'light' : 'dark';
                 document.documentElement.dataset.theme = this.theme;
                 localStorage.setItem('theme', this.theme);
+            },
+            toggleSidebar() {
+                this.sidebarOpen = !this.sidebarOpen;
+                localStorage.setItem('sidebarOpen', this.sidebarOpen);
             },
             suggest(text) {
                 const i = document.getElementById('welcome-input');
@@ -212,17 +284,25 @@
     /* ══ GLOBAL HELPERS (shared by Alpine + delegated handlers) ══ */
     window.currentActiveId = null;
 
-    function autosize(el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; }
+    function autosize(el) {
+        el.style.height = 'auto';
+        const maxHeight = parseFloat(getComputedStyle(el).maxHeight);
+        const overflowing = el.scrollHeight > maxHeight;
+        el.style.height = (overflowing ? maxHeight : el.scrollHeight) + 'px';
+        el.style.overflowY = overflowing ? 'auto' : 'hidden';
+    }
 
     function scrollMessages() {
         const c = document.getElementById('messages-container');
         if (c) c.scrollTop = c.scrollHeight;
     }
 
-    /* Active conversation gets a daisyUI base-300 highlight */
+    /* Active conversation gets the theme's secondary-color highlight */
     function highlightActive() {
         document.querySelectorAll('.conversation-item').forEach(el => {
-            el.classList.toggle('bg-base-300', String(el.dataset.id) === String(window.currentActiveId));
+            const isActive = String(el.dataset.id) === String(window.currentActiveId);
+            el.classList.toggle('bg-secondary/15', isActive);
+            el.classList.toggle('text-secondary', isActive);
         });
     }
 
@@ -298,6 +378,23 @@
     });
     document.body.addEventListener('htmx:sseMessage', scrollMessages);
 
+    /* The __session cookie is a ~60s JWT that clerk-js refreshes on its own timer.
+       A request can land right on that boundary and get a 401 before the refresh
+       lands — force a fresh token (which updates the cookie) and retry once. The
+       X-Retried-Auth header stops a second real 401 (e.g. actually signed out)
+       from looping. */
+    document.body.addEventListener('htmx:responseError', async (e) => {
+        const { xhr, requestConfig } = e.detail;
+        if (xhr.status !== 401 || !window.Clerk?.session || requestConfig.headers['X-Retried-Auth']) return;
+        await window.Clerk.session.getToken({ skipCache: true });
+        htmx.ajax(requestConfig.verb, requestConfig.path, {
+            source: requestConfig.elt,
+            target: requestConfig.target,
+            swap: requestConfig.swap,
+            headers: { 'X-Retried-Auth': '1' },
+        });
+    });
+
     /* ══ LOAD CLERK ══════════════════════════════════════════════ */
     (function () {
         const publishableKey = "{{ CLERK_PUBLISHABLE_KEY }}";
@@ -338,7 +435,7 @@
 
             /* show app */
             document.getElementById('loading-screen').style.display = 'none';
-            document.getElementById('app-container').style.display = 'grid';
+            document.getElementById('app-container').style.display = 'flex';
 
             /* load the sidebar list now that the Clerk session cookie is fresh */
             htmx.ajax('GET', '/api/conversations/partial/', { target: '#conversations-list', swap: 'innerHTML' });

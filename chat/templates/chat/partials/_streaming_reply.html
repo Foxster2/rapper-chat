@@ -6,11 +6,11 @@ the whole content with server-rendered markdown HTML and closes the connection.
 <div class="chat chat-start max-w-3xl mx-auto w-full px-4" hx-ext="sse"
      sse-connect="/api/conversations/{{ conversation.id }}/stream/" sse-close="done">
     <div class="chat-image">
-        <div class="w-8 h-8 rounded-full bg-primary/20 text-primary flex items-center justify-center">
+        <div class="w-8 h-8 rounded-full bg-accent/20 text-accent flex items-center justify-center">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
         </div>
     </div>
     <div class="chat-bubble assistant-content" sse-swap="done" hx-swap="innerHTML">
-        <span class="thinking loading loading-dots loading-sm align-middle"></span><span class="stream-tokens" sse-swap="token" hx-swap="beforeend"></span><span class="stream-cursor">▍</span>
+        <span class="thinking loading loading-dots loading-sm align-middle text-accent"></span><span class="stream-tokens" sse-swap="token" hx-swap="beforeend"></span><span class="stream-cursor text-accent">▍</span>
     </div>
 </div>
