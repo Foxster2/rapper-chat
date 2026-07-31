@@ -8,3 +8,7 @@ markdown
 nh3
 django-htmx
 django-cotton
+gunicorn
+whitenoise
+dj-database-url
+psycopg2-binary

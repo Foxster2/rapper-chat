@@ -28,5 +28,5 @@ COPY . /app/
 # Expose port
 EXPOSE 8000
 
-# Default command to run the server via Gunicorn
-CMD ["gunicorn", "rapper.wsgi:application", "--bind", "0.0.0.0:8000"]
+# Default command to run migrations, collect static files, and launch Gunicorn on dynamic PORT
+CMD ["sh", "-c", "python manage.py migrate --noinput && python manage.py collectstatic --noinput && gunicorn rapper.wsgi:application --bind 0.0.0.0:${PORT:-8000}"]
