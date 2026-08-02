@@ -37,7 +37,7 @@ Swapped into #chat-view by htmx when a conversation is selected or created.
         `streaming` (driven by the SSE connection's own open/close events) decides
         which is mounted.
         {% endcomment %}
-        <button type="submit" x-show="!streaming" class="btn btn-primary btn-sm btn-circle" title="Send">
+        <button type="submit" x-show="!streaming" :disabled="stopping" class="btn btn-primary btn-sm btn-circle" title="Send">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
         </button>
         <button type="button" x-show="streaming" x-cloak class="btn btn-primary btn-sm btn-circle" title="Stop generating" @click="stopStream()">

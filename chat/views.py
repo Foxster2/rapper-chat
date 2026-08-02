@@ -21,7 +21,10 @@ from .models import Conversation, Message
 SYSTEM_PROMPT = "You are a helpful, thoughtful AI assistant. Output response in clean, semantic markdown format."
 
 # How often the streaming generator checks whether the user asked it to stop.
-STOP_POLL_INTERVAL = 0.25  # seconds
+# The browser freezes the reply on click, so this no longer gates how responsive
+# stopping feels -- it gates how much extra text is generated (and billed) after
+# the click, and how far the saved reply runs past what the user saw.
+STOP_POLL_INTERVAL = 0.1  # seconds
 
 # Shown when a reply produced no text at all -- the model returned an empty
 # stream. The message row is still created (with empty content) so the

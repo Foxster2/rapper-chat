@@ -8,6 +8,7 @@ function chat() {
         sidebarOpen: true,
         searchOpen: false,
         streaming: false,
+        stopping: false,
         init() {
             this.theme = localStorage.getItem('theme') || 'dark';
             document.documentElement.dataset.theme = this.theme;
@@ -19,6 +20,7 @@ function chat() {
                 /* A pane swap tears down any previous stream; if the incoming pane
                    has a pending reply, sseOpen turns this back on a moment later. */
                 this.streaming = false;
+                this.stopping = false;
                 highlightActive();
             });
             window.addEventListener('go-welcome', () => this.newChat());
@@ -29,16 +31,30 @@ function chat() {
                pane is opened, without each having to announce itself. sseClose
                fires both when the `done` event arrives and when the bubble is
                removed mid-stream. */
-            document.body.addEventListener('htmx:sseOpen', () => { this.streaming = true; });
-            document.body.addEventListener('htmx:sseClose', () => { this.streaming = false; });
+            document.body.addEventListener('htmx:sseOpen', () => {
+                this.streaming = true;
+                this.stopping = false;
+            });
+            document.body.addEventListener('htmx:sseClose', () => {
+                this.streaming = false;
+                this.stopping = false;
+            });
         },
-        /* Raise the stop flag and let the server finish the reply the normal way:
-           it saves what was generated and sends it back through the usual `done`
-           event, so the bubble ends up markdown-rendered like any other. */
+        /* Stopping is deliberately optimistic. The server round-trip alone is a few
+           hundred milliseconds, so waiting for it to acknowledge before changing
+           anything on screen is what made this feel sluggish. Instead the reply is
+           frozen and the button flips the instant it's clicked; the server catches
+           up on its own and the `done` event swaps in the markdown-rendered text
+           as usual. `stopping` covers the gap between the two: the reply that is
+           still finishing server-side must land before another can be sent, or the
+           messages would be written out of order. */
         stopStream() {
-            if (!this.activeId) return;
+            if (!this.activeId || this.stopping) return;
+            freezeStreamingReply();
+            this.streaming = false;
+            this.stopping = true;
             fetch(`/api/conversations/${this.activeId}/stop/`, { method: 'POST' })
-                .catch(() => {});
+                .catch(() => { this.stopping = false; });
         },
         toggleTheme() {
             this.theme = this.theme === 'dark' ? 'light' : 'dark';
@@ -57,6 +73,7 @@ function chat() {
             this.activeId = null;
             window.currentActiveId = null;
             this.streaming = false;
+            this.stopping = false;
             document.getElementById('chat-view').innerHTML = '';
             highlightActive();
             this.$nextTick(() => document.getElementById('welcome-input')?.focus());
@@ -107,6 +124,20 @@ function escapeHtml(str) {
     const div = document.createElement('div');
     div.textContent = str;
     return div.innerHTML;
+}
+
+/* Freeze the reply that is currently streaming, without closing the connection.
+   Replacing the token target with a copy of itself leaves the SSE extension
+   appending into a node that is no longer in the document, so text stops growing
+   on screen while the request stays open -- which matters, because the server
+   only saves the partial reply after its stream ends. The `done` event still
+   targets the bubble itself and replaces this frozen text with the rendered
+   markdown when it arrives. */
+function freezeStreamingReply() {
+    const live = document.querySelector('#messages-container .stream-tokens');
+    if (live) live.replaceWith(live.cloneNode(true));
+    document.querySelector('#messages-container .stream-cursor')?.remove();
+    document.querySelector('#messages-container .thinking')?.remove();
 }
 
 /* Active conversation gets the theme's secondary-color highlight */
@@ -183,8 +214,10 @@ document.addEventListener('keydown', (e) => {
         e.preventDefault();
         /* While a reply is streaming the send button is showing as Stop, so Enter
            must not quietly submit either — otherwise the one path the user can't
-           see would start a second, overlapping reply. */
-        if (appState()?.streaming) return;
+           see would start a second, overlapping reply. The same applies during
+           the brief window after a stop, until the server has stored the reply. */
+        const state = appState();
+        if (state?.streaming || state?.stopping) return;
         e.target.closest('form').requestSubmit();
     }
 });

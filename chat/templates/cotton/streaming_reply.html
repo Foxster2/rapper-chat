@@ -4,7 +4,7 @@ Assistant bubble that streams via SSE. htmx opens an EventSource to stream_reply
 `token` events append text into .stream-tokens, and the final `done` event replaces
 the whole content with server-rendered markdown HTML and closes the connection.
 {% endcomment %}
-<div class="chat chat-start max-w-3xl mx-auto w-full px-4" hx-ext="sse"
+<div class="chat chat-enter chat-start max-w-3xl mx-auto w-full px-4" hx-ext="sse"
      sse-connect="/api/conversations/{{ conversation.id }}/stream/" sse-close="done">
     <div class="chat-image">
         <div class="w-8 h-8 rounded-full bg-accent/20 text-accent flex items-center justify-center">
