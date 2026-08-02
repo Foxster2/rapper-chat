@@ -6,6 +6,11 @@ class Conversation(models.Model):
     title = models.CharField(max_length=255, default="New Chat")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    # Set by the stop endpoint and polled by the in-flight streaming generator,
+    # which lives in a different request (and possibly a different Gunicorn
+    # worker), so the signal has to travel through shared storage rather than
+    # process memory. Cleared when a stream starts and when one finishes.
+    stop_requested = models.BooleanField(default=False)
 
     class Meta:
         ordering = ['-updated_at']

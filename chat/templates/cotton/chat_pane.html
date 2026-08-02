@@ -31,8 +31,17 @@ Swapped into #chat-view by htmx when a conversation is selected or created.
           hx-target="#messages-container" hx-swap="beforeend"
           hx-on::after-request="if(event.detail.successful){ this.reset(); this.querySelector('textarea').style.height='auto'; }">
         <textarea name="content" class="autosize textarea textarea-ghost flex-1 resize-none overflow-hidden min-h-[40px] max-h-40 bg-transparent focus:outline-none px-2" rows="1" placeholder="Ask anything…" required></textarea>
-        <button type="submit" class="btn btn-primary btn-sm btn-circle">
+        {% comment %}
+        Send and Stop are two buttons rather than one with a swapped icon, because
+        they differ in kind: one submits the form, the other must not. Alpine's
+        `streaming` (driven by the SSE connection's own open/close events) decides
+        which is mounted.
+        {% endcomment %}
+        <button type="submit" x-show="!streaming" class="btn btn-primary btn-sm btn-circle" title="Send">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+        </button>
+        <button type="button" x-show="streaming" x-cloak class="btn btn-primary btn-sm btn-circle" title="Stop generating" @click="stopStream()">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg>
         </button>
     </form>
 </div>

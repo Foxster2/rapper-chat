@@ -1,3 +1,4 @@
+import time
 import markdown  # server-side markdown -> HTML for the final rendered reply
 import nh3  # HTML sanitizer applied to the rendered markdown before it reaches the browser
 from django.shortcuts import render, redirect
@@ -18,6 +19,16 @@ from langchain_core.output_parsers import StrOutputParser
 from .models import Conversation, Message
 
 SYSTEM_PROMPT = "You are a helpful, thoughtful AI assistant. Output response in clean, semantic markdown format."
+
+# How often the streaming generator checks whether the user asked it to stop.
+STOP_POLL_INTERVAL = 0.25  # seconds
+
+# Shown when a reply produced no text at all -- the model returned an empty
+# stream. The message row is still created (with empty content) so the
+# conversation isn't left looking unanswered and won't re-stream on the next
+# pane load. A stop always captures at least one token, since the stop check
+# only runs after a token has been yielded, so it does not normally land here.
+STOPPED_EMPTY_HTML = '<p class="italic text-base-content/50">Response stopped.</p>'
 
 
 def build_chain():
@@ -45,7 +56,10 @@ def build_history(conversation):
     for msg in conversation.messages.all():
         if msg.role == 'user':
             history.append(HumanMessage(content=msg.content))
-        else:
+        elif msg.content.strip():
+            # A reply stopped before its first token is stored with empty content;
+            # some providers reject an empty assistant turn, so leave it out of
+            # the history rather than replaying it.
             history.append(AIMessage(content=msg.content))
     return history
 
@@ -257,14 +271,31 @@ def stream_reply(request, conversation_id):
     # into the generator.
     history = build_history(conversation)
 
+    # Clear any flag left behind by an earlier stream so a stale request can't
+    # cut this one short. Runs in the view body, which executes before the
+    # generator is first iterated, so it can't race a genuine stop.
+    Conversation.objects.filter(pk=conversation.pk).update(stop_requested=False)
+
     def event_stream():
         collected = []
+        stopped = False
         try:
+            next_stop_check = time.monotonic() + STOP_POLL_INTERVAL
             for chunk in build_chain().stream({"history": history}):
                 if not chunk:
                     continue
                 collected.append(chunk)
                 yield sse_frame('token', chunk)
+
+                # Time-based rather than per-token: tokens arrive far faster than
+                # a person can click, so polling every token would spend a query
+                # per token for no extra responsiveness.
+                now = time.monotonic()
+                if now >= next_stop_check:
+                    next_stop_check = now + STOP_POLL_INTERVAL
+                    if Conversation.objects.filter(pk=conversation.pk, stop_requested=True).exists():
+                        stopped = True
+                        break
         except Exception as e:
             print(f"LangChain/OpenRouter streaming error: {e}")
             yield sse_frame('error', str(e))
@@ -274,15 +305,38 @@ def stream_reply(request, conversation_id):
             yield sse_frame('done', '<p class="text-error">Sorry — the reply failed to generate. Please try again.</p>')
             return
 
-        # Persist the full reply (with its rendered HTML, so future pane loads
-        # don't re-run markdown/sanitization), bump updated_at, and send the HTML.
+        # A stopped reply takes this same path deliberately: it is persisted and
+        # rendered exactly like a complete one, so it survives a reload and reads
+        # back as an ordinary (if short) assistant turn.
         full = ''.join(collected)
-        full_html = render_markdown(full)
+        full_html = render_markdown(full) if full.strip() else STOPPED_EMPTY_HTML
         Message.objects.create(conversation=conversation, role='assistant', content=full, content_html=full_html)
-        conversation.save()
+        conversation.stop_requested = False
+        conversation.save(update_fields=['stop_requested', 'updated_at'])
         yield sse_frame('done', full_html)
 
     response = StreamingHttpResponse(event_stream(), content_type='text/event-stream')
     response['Cache-Control'] = 'no-cache'
     response['X-Accel-Buffering'] = 'no'  # disable proxy/server buffering so tokens flush immediately
     return response
+
+
+@csrf_exempt
+@require_clerk_auth
+def stop_stream(request, conversation_id):
+    """POST: ask the in-flight reply for this conversation to stop early.
+
+    This only raises the flag; the streaming generator notices it, breaks out of
+    the token loop, and finishes through its normal completion path. Leaving the
+    generator as the sole writer of the assistant message is what keeps a stop
+    from racing a reply that was about to finish on its own and producing two
+    rows. Safe to call repeatedly, and a no-op if nothing is streaming.
+    """
+    if request.method != 'POST':
+        return HttpResponseNotAllowed(['POST'])
+    updated = Conversation.objects.filter(
+        id=conversation_id, owner=request.clerk_user_id
+    ).update(stop_requested=True)
+    if not updated:
+        return HttpResponseNotFound('Conversation not found')
+    return HttpResponse(status=204)

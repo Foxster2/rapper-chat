@@ -7,6 +7,7 @@ function chat() {
         theme: 'dark',
         sidebarOpen: true,
         searchOpen: false,
+        streaming: false,
         init() {
             this.theme = localStorage.getItem('theme') || 'dark';
             document.documentElement.dataset.theme = this.theme;
@@ -15,9 +16,29 @@ function chat() {
             window.addEventListener('conversation-active', (e) => {
                 this.activeId = e.detail.id;
                 window.currentActiveId = e.detail.id;
+                /* A pane swap tears down any previous stream; if the incoming pane
+                   has a pending reply, sseOpen turns this back on a moment later. */
+                this.streaming = false;
                 highlightActive();
             });
             window.addEventListener('go-welcome', () => this.newChat());
+
+            /* The SSE extension's own lifecycle events are the source of truth for
+               whether a reply is in flight — that covers replies started from the
+               composer, from the welcome screen, and ones already pending when a
+               pane is opened, without each having to announce itself. sseClose
+               fires both when the `done` event arrives and when the bubble is
+               removed mid-stream. */
+            document.body.addEventListener('htmx:sseOpen', () => { this.streaming = true; });
+            document.body.addEventListener('htmx:sseClose', () => { this.streaming = false; });
+        },
+        /* Raise the stop flag and let the server finish the reply the normal way:
+           it saves what was generated and sends it back through the usual `done`
+           event, so the bubble ends up markdown-rendered like any other. */
+        stopStream() {
+            if (!this.activeId) return;
+            fetch(`/api/conversations/${this.activeId}/stop/`, { method: 'POST' })
+                .catch(() => {});
         },
         toggleTheme() {
             this.theme = this.theme === 'dark' ? 'light' : 'dark';
@@ -35,6 +56,7 @@ function chat() {
         newChat() {
             this.activeId = null;
             window.currentActiveId = null;
+            this.streaming = false;
             document.getElementById('chat-view').innerHTML = '';
             highlightActive();
             this.$nextTick(() => document.getElementById('welcome-input')?.focus());
@@ -44,6 +66,13 @@ function chat() {
 
 /* ══ GLOBAL HELPERS (shared by Alpine + delegated handlers) ══ */
 window.currentActiveId = null;
+
+/* Reach the shell's Alpine state from the delegated handlers below, which live
+   outside any Alpine scope. Returns undefined until Alpine has initialized. */
+function appState() {
+    const el = document.getElementById('app-container');
+    return el && window.Alpine ? Alpine.$data(el) : undefined;
+}
 
 function autosize(el) {
     el.style.height = 'auto';
@@ -143,7 +172,7 @@ document.addEventListener('click', (e) => {
     const result = e.target.closest('.search-result-item');
     if (result) {
         htmx.ajax('GET', `/api/conversations/${result.dataset.id}/pane/`, { target: '#chat-view', swap: 'innerHTML' });
-        Alpine.$data(document.getElementById('app-container')).searchOpen = false;
+        appState().searchOpen = false;
     }
 });
 document.addEventListener('input', (e) => {
@@ -152,6 +181,10 @@ document.addEventListener('input', (e) => {
 document.addEventListener('keydown', (e) => {
     if (e.target.matches('textarea.autosize') && e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
+        /* While a reply is streaming the send button is showing as Stop, so Enter
+           must not quietly submit either — otherwise the one path the user can't
+           see would start a second, overlapping reply. */
+        if (appState()?.streaming) return;
         e.target.closest('form').requestSubmit();
     }
 });
