@@ -28,8 +28,9 @@ SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-default-key')
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'True') == 'True'
 
-# Configure ALLOWED_HOSTS dynamically from environment variable (comma-separated string)
-allowed_hosts_env = os.getenv('ALLOWED_HOSTS', '127.0.0.1,localhost,*.up.railway.app,*')
+# Configure ALLOWED_HOSTS dynamically from environment variable (comma-separated string).
+# Subdomain wildcards use a leading dot -- "*.up.railway.app" matches nothing.
+allowed_hosts_env = os.getenv('ALLOWED_HOSTS', '127.0.0.1,localhost,.up.railway.app,*')
 ALLOWED_HOSTS = [host.strip() for host in allowed_hosts_env.split(',') if host.strip()]
 
 # Configure CSRF_TRUSTED_ORIGINS for Railway HTTPS and local testing
@@ -93,7 +94,11 @@ WSGI_APPLICATION = 'rapper.wsgi.application'
 DATABASES = {
     'default': dj_database_url.config(
         default=f'sqlite:///{BASE_DIR / "db.sqlite3"}',
+        # Connections are persistent and per-thread, so the threaded Gunicorn
+        # worker holds one per active thread; health checks recycle any that
+        # went stale between requests instead of raising on first use.
         conn_max_age=600,
+        conn_health_checks=True,
     )
 }
 
