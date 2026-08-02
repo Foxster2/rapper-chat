@@ -67,6 +67,13 @@ body { font-family: 'Inter', system-ui, sans-serif; }
 .btn { transition: transform 0.08s ease, background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease; }
 .btn:active { transform: scale(0.96); }
 
+/* Both theme icons share one grid cell. Mid-transition they are both mounted,
+   and as flex children they would sit side by side for those 200ms, doubling
+   the button's content width and shunting each other around. Stacked, they
+   simply cross-fade in place. */
+.theme-toggle { display: inline-grid; place-items: center; }
+.theme-toggle > svg { grid-area: 1 / 1; }
+
 /* htmx in-flight: fade the conversation item being opened */
 .conversation-item.htmx-request { opacity: 0.55; }
 
