@@ -1,6 +1,4 @@
 import time
-import markdown  # server-side markdown -> HTML for the final rendered reply
-import nh3  # HTML sanitizer applied to the rendered markdown before it reaches the browser
 from django.shortcuts import render, redirect
 from django.http import (
     HttpResponse, JsonResponse, StreamingHttpResponse, QueryDict,
@@ -11,21 +9,9 @@ from django.views.decorators.csrf import csrf_exempt
 from django_cotton import render_component
 from django_htmx.http import trigger_client_event
 
-from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.output_parsers import StrOutputParser
-
 from .models import Conversation, Message
-
-SYSTEM_PROMPT = "You are a helpful, thoughtful AI assistant. Output response in clean, semantic markdown format."
-
-TITLE_PROMPT = (
-    "You name chat conversations. Given the opening exchange, reply with a title "
-    "of three to six words describing what the conversation is about. "
-    "Reply with the title alone: no quotes, no surrounding punctuation, no "
-    "prefix such as 'Title:', and no explanation."
-)
+from .llm import build_chain, build_history, generate_title
+from .utils import render_markdown, sse_frame
 
 # How often the streaming generator checks whether the user asked it to stop.
 # The browser freezes the reply on click, so this no longer gates how responsive
@@ -39,107 +25,6 @@ STOP_POLL_INTERVAL = 0.1  # seconds
 # pane load. A stop always captures at least one token, since the stop check
 # only runs after a token has been yielded, so it does not normally land here.
 STOPPED_EMPTY_HTML = '<p class="italic text-base-content/50">Response stopped.</p>'
-
-
-def _chat_model(model_name, **kwargs):
-    """A ChatOpenAI pointed at OpenRouter. Shared by the reply chain and the
-    title generator so they can run on different models."""
-    return ChatOpenAI(
-        openai_api_base="https://openrouter.ai/api/v1",
-        openai_api_key=settings.OPENROUTER_API_KEY,
-        model_name=model_name,
-        default_headers={
-            "HTTP-Referer": "http://localhost:8000",
-            "X-Title": "AI Chat Wrapper v1",
-        },
-        **kwargs,
-    )
-
-
-def build_chain():
-    """Build the LCEL chain (prompt | ChatOpenAI@OpenRouter | str) used by the
-    streaming endpoint. Supports both .invoke() and .stream()."""
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", SYSTEM_PROMPT),
-        MessagesPlaceholder(variable_name="history"),
-    ])
-    return prompt | _chat_model(settings.OPENROUTER_MODEL) | StrOutputParser()
-
-
-def generate_title(question, answer):
-    """Ask the model for a short title describing an exchange.
-
-    Returns '' if anything goes wrong — the caller keeps whatever title the
-    conversation already has, since a bad title is worse than a plain one and a
-    failure here must never surface in the chat.
-    """
-    try:
-        # A ceiling against a runaway response, not a target -- the model stops
-        # on its own after a few words. Kept well clear of that so a truncated
-        # reply can never be mistaken for a title.
-        raw = _chat_model(
-            settings.OPENROUTER_TITLE_MODEL, temperature=0.3, max_tokens=512,
-        ).invoke([
-            SystemMessage(content=TITLE_PROMPT),
-            HumanMessage(content=f'User: {question[:500]}\n\nAssistant: {answer[:500]}'),
-        ]).content
-    except Exception as e:
-        print(f"Title generation failed: {e}")
-        return ''
-    return _clean_title(raw)
-
-
-def _clean_title(raw):
-    """Strip the decorations models put around a title, and reject anything that
-    isn't one — the caller then keeps the existing name, which reads better than
-    a sentence chopped off at the column limit."""
-    title = (raw or '').strip().split('\n')[-1].strip()
-    for prefix in ('chat title:', 'title:'):
-        if title.lower().startswith(prefix):
-            title = title[len(prefix):].strip()
-    title = title.strip('"\'“”').rstrip('.').strip()
-    return title if len(title) <= 60 else ''
-
-
-def build_history(conversation):
-    """Convert stored messages into LangChain Human/AI messages, in order."""
-    history = []
-    for msg in conversation.messages.all():
-        if msg.role == 'user':
-            history.append(HumanMessage(content=msg.content))
-        elif msg.content.strip():
-            # A reply stopped before its first token is stored with empty content;
-            # some providers reject an empty assistant turn, so leave it out of
-            # the history rather than replaying it.
-            history.append(AIMessage(content=msg.content))
-    return history
-
-
-def sse_frame(event, data):
-    """Format a single Server-Sent Events frame. Multi-line data is split across
-    multiple `data:` lines per the SSE spec (the client rejoins them with newlines)."""
-    body = ''.join(f'data: {line}\n' for line in data.split('\n'))
-    return f'event: {event}\n{body}\n'
-
-
-# nh3's defaults already cover every tag the markdown extensions emit; we only add
-# back `class` on code blocks so fenced_code's language hint survives sanitizing.
-ALLOWED_ATTRIBUTES = {
-    **nh3.ALLOWED_ATTRIBUTES,
-    'code': {'class'},
-    'pre': {'class'},
-}
-
-
-def render_markdown(text):
-    """Render the assistant's markdown reply to HTML for final display.
-
-    The model's output is untrusted, so the generated HTML is sanitized before it
-    reaches the browser — raw <script>/<iframe> tags and inline event handlers
-    (onerror=, onload=, ...) are stripped rather than executed.
-    """
-    html = markdown.markdown(text, extensions=['fenced_code', 'tables'])
-    return nh3.clean(html, attributes=ALLOWED_ATTRIBUTES)
 
 
 def require_clerk_auth(view_func):
