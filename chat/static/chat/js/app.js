@@ -35,9 +35,28 @@ function chat() {
                 this.streaming = true;
                 this.stopping = false;
             });
-            document.body.addEventListener('htmx:sseClose', () => {
+            document.body.addEventListener('htmx:sseClose', (e) => {
                 this.streaming = false;
                 this.stopping = false;
+                /* Opening exchange just finished, so ask the server to name the
+                   chat. Deliberately after the reply rather than during it —
+                   nobody is waiting on the title. A `message` close means the
+                   `done` event ended the stream, as opposed to the bubble being
+                   torn down by a pane switch. The server answers 204 when there
+                   is nothing to rename, and htmx leaves the sidebar alone. */
+                if (e.detail?.type === 'message' && this.activeId
+                    && document.querySelectorAll('#messages-container .chat').length === 2) {
+                    htmx.ajax('POST', `/api/conversations/${this.activeId}/title/`,
+                              { target: '#conversations-list', swap: 'innerHTML' });
+                }
+            });
+
+            /* The sidebar refreshes itself via the swap above; the topbar
+               breadcrumb is outside that target, so update it here. */
+            window.addEventListener('conversation-titled', (e) => {
+                if (String(e.detail.id) !== String(this.activeId)) return;
+                const crumb = document.querySelector('.breadcrumb-title');
+                if (crumb) crumb.textContent = e.detail.title;
             });
         },
         /* Stopping is deliberately optimistic. The server round-trip alone is a few

@@ -154,3 +154,9 @@ CLERK_JWKS_URL = os.getenv('CLERK_JWKS_URL')
 
 OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')
 OPENROUTER_MODEL = os.getenv('OPENROUTER_MODEL', 'meta-llama/llama-3.3-70b-instruct:free')
+# Chat titles are a short, throwaway call, so they run on their own small
+# instruction-tuned model rather than borrowing the chat one -- which may well be
+# a reasoning model, and those spend their budget thinking before they answer.
+# `or` rather than a getenv default: the key is present but blank in .env.example,
+# and an empty string would otherwise be taken as a real model name.
+OPENROUTER_TITLE_MODEL = os.getenv('OPENROUTER_TITLE_MODEL') or 'inclusionai/ling-3.0-flash:free'

@@ -15,4 +15,7 @@ urlpatterns = [
     # SSE stream of the assistant reply, and the out-of-band request to end it early
     path('api/conversations/<int:conversation_id>/stream/', views.stream_reply, name='stream_reply'),
     path('api/conversations/<int:conversation_id>/stop/', views.stop_stream, name='stop_stream'),
+
+    # Model-written chat title, requested once the opening reply has landed
+    path('api/conversations/<int:conversation_id>/title/', views.conversation_title, name='conversation_title'),
 ]

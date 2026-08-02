@@ -12,13 +12,20 @@ from django_cotton import render_component
 from django_htmx.http import trigger_client_event
 
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.output_parsers import StrOutputParser
 
 from .models import Conversation, Message
 
 SYSTEM_PROMPT = "You are a helpful, thoughtful AI assistant. Output response in clean, semantic markdown format."
+
+TITLE_PROMPT = (
+    "You name chat conversations. Given the opening exchange, reply with a title "
+    "of three to six words describing what the conversation is about. "
+    "Reply with the title alone: no quotes, no surrounding punctuation, no "
+    "prefix such as 'Title:', and no explanation."
+)
 
 # How often the streaming generator checks whether the user asked it to stop.
 # The browser freezes the reply on click, so this no longer gates how responsive
@@ -34,23 +41,64 @@ STOP_POLL_INTERVAL = 0.1  # seconds
 STOPPED_EMPTY_HTML = '<p class="italic text-base-content/50">Response stopped.</p>'
 
 
-def build_chain():
-    """Build the LCEL chain (prompt | ChatOpenAI@OpenRouter | str) used by the
-    streaming endpoint. Supports both .invoke() and .stream()."""
-    llm = ChatOpenAI(
+def _chat_model(model_name, **kwargs):
+    """A ChatOpenAI pointed at OpenRouter. Shared by the reply chain and the
+    title generator so they can run on different models."""
+    return ChatOpenAI(
         openai_api_base="https://openrouter.ai/api/v1",
         openai_api_key=settings.OPENROUTER_API_KEY,
-        model_name=settings.OPENROUTER_MODEL,
+        model_name=model_name,
         default_headers={
             "HTTP-Referer": "http://localhost:8000",
             "X-Title": "AI Chat Wrapper v1",
         },
+        **kwargs,
     )
+
+
+def build_chain():
+    """Build the LCEL chain (prompt | ChatOpenAI@OpenRouter | str) used by the
+    streaming endpoint. Supports both .invoke() and .stream()."""
     prompt = ChatPromptTemplate.from_messages([
         ("system", SYSTEM_PROMPT),
         MessagesPlaceholder(variable_name="history"),
     ])
-    return prompt | llm | StrOutputParser()
+    return prompt | _chat_model(settings.OPENROUTER_MODEL) | StrOutputParser()
+
+
+def generate_title(question, answer):
+    """Ask the model for a short title describing an exchange.
+
+    Returns '' if anything goes wrong — the caller keeps whatever title the
+    conversation already has, since a bad title is worse than a plain one and a
+    failure here must never surface in the chat.
+    """
+    try:
+        # A ceiling against a runaway response, not a target -- the model stops
+        # on its own after a few words. Kept well clear of that so a truncated
+        # reply can never be mistaken for a title.
+        raw = _chat_model(
+            settings.OPENROUTER_TITLE_MODEL, temperature=0.3, max_tokens=512,
+        ).invoke([
+            SystemMessage(content=TITLE_PROMPT),
+            HumanMessage(content=f'User: {question[:500]}\n\nAssistant: {answer[:500]}'),
+        ]).content
+    except Exception as e:
+        print(f"Title generation failed: {e}")
+        return ''
+    return _clean_title(raw)
+
+
+def _clean_title(raw):
+    """Strip the decorations models put around a title, and reject anything that
+    isn't one — the caller then keeps the existing name, which reads better than
+    a sentence chopped off at the column limit."""
+    title = (raw or '').strip().split('\n')[-1].strip()
+    for prefix in ('chat title:', 'title:'):
+        if title.lower().startswith(prefix):
+            title = title[len(prefix):].strip()
+    title = title.strip('"\'“”').rstrip('.').strip()
+    return title if len(title) <= 60 else ''
 
 
 def build_history(conversation):
@@ -281,7 +329,6 @@ def stream_reply(request, conversation_id):
 
     def event_stream():
         collected = []
-        stopped = False
         try:
             next_stop_check = time.monotonic() + STOP_POLL_INTERVAL
             for chunk in build_chain().stream({"history": history}):
@@ -297,7 +344,6 @@ def stream_reply(request, conversation_id):
                 if now >= next_stop_check:
                     next_stop_check = now + STOP_POLL_INTERVAL
                     if Conversation.objects.filter(pk=conversation.pk, stop_requested=True).exists():
-                        stopped = True
                         break
         except Exception as e:
             print(f"LangChain/OpenRouter streaming error: {e}")
@@ -321,6 +367,39 @@ def stream_reply(request, conversation_id):
     response = StreamingHttpResponse(event_stream(), content_type='text/event-stream')
     response['Cache-Control'] = 'no-cache'
     response['X-Accel-Buffering'] = 'no'  # disable proxy/server buffering so tokens flush immediately
+    return response
+
+
+@csrf_exempt
+@require_clerk_auth
+def conversation_title(request, conversation_id):
+    """POST: replace the placeholder title with one the model writes.
+
+    Called by the client once the first reply has finished, rather than during
+    it -- naming the chat is not something the user is waiting on, so it must
+    not delay the reply. Only ever acts on the opening exchange; later calls are
+    a no-op, which also means a rename can't be overwritten afterwards.
+    """
+    if request.method != 'POST':
+        return HttpResponseNotAllowed(['POST'])
+    try:
+        conversation = Conversation.objects.get(id=conversation_id, owner=request.clerk_user_id)
+    except Conversation.DoesNotExist:
+        return HttpResponseNotFound('Conversation not found')
+
+    messages = list(conversation.messages.all()[:3])
+    if len(messages) != 2 or messages[0].role != 'user':
+        return HttpResponse(status=204)
+
+    title = generate_title(messages[0].content, messages[1].content)
+    if not title:
+        return HttpResponse(status=204)
+
+    conversation.title = title
+    conversation.save(update_fields=['title'])
+    response = _list_partial(request, active_id=conversation.id)
+    trigger_client_event(response, 'conversation-titled',
+                         {'id': conversation.id, 'title': title})
     return response
 
 
