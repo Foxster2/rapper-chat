@@ -160,3 +160,12 @@ OPENROUTER_MODEL = os.getenv('OPENROUTER_MODEL', 'meta-llama/llama-3.3-70b-instr
 # `or` rather than a getenv default: the key is present but blank in .env.example,
 # and an empty string would otherwise be taken as a real model name.
 OPENROUTER_TITLE_MODEL = os.getenv('OPENROUTER_TITLE_MODEL') or 'inclusionai/ling-3.0-flash:free'
+
+# Polar.sh billing
+POLAR_ACCESS_TOKEN = os.getenv('POLAR_ACCESS_TOKEN')
+POLAR_WEBHOOK_SECRET = os.getenv('POLAR_WEBHOOK_SECRET')
+POLAR_SERVER = os.getenv('POLAR_SERVER', 'sandbox')  # 'sandbox' or 'production'
+POLAR_PRODUCT_BASIC_MONTHLY = os.getenv('POLAR_PRODUCT_BASIC_MONTHLY')
+POLAR_PRODUCT_BASIC_ANNUAL = os.getenv('POLAR_PRODUCT_BASIC_ANNUAL')
+POLAR_PRODUCT_PRO_MONTHLY = os.getenv('POLAR_PRODUCT_PRO_MONTHLY')
+POLAR_PRODUCT_PRO_ANNUAL = os.getenv('POLAR_PRODUCT_PRO_ANNUAL')

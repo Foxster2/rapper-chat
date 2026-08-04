@@ -2,13 +2,15 @@ import time
 from django.shortcuts import render, redirect
 from django.http import (
     HttpResponse, JsonResponse, StreamingHttpResponse, QueryDict,
-    HttpResponseBadRequest, HttpResponseNotFound, HttpResponseNotAllowed,
+    HttpResponseBadRequest, HttpResponseForbidden, HttpResponseNotFound, HttpResponseNotAllowed,
 )
 from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
 from django_cotton import render_component
 from django_htmx.http import trigger_client_event
+from polar_sdk.webhooks import WebhookVerificationError, WebhookUnknownTypeError
 
+from . import billing
 from .models import Conversation, Message
 from .llm import build_chain, build_history, generate_title
 from .utils import render_markdown, sse_frame
@@ -38,6 +40,18 @@ def require_clerk_auth(view_func):
 
 def _user_conversations(request):
     return Conversation.objects.filter(owner=request.clerk_user_id)
+
+
+def _reject_if_over_quota(request):
+    """None if the user may send another message; otherwise a response that sends
+    them to the pricing page. Both send views are hx-post forms, so a plain 302
+    would just get swapped into the target div by htmx instead of navigating the
+    browser -- HX-Redirect is the header htmx honors to force a full redirect."""
+    if billing.has_quota(request.clerk_user_id):
+        return None
+    response = HttpResponse(status=204)
+    response['HX-Redirect'] = '/pricing/'
+    return response
 
 
 def _rendered_messages(conversation):
@@ -152,6 +166,10 @@ def start_conversation(request):
     if not content:
         return HttpResponseBadRequest('Content cannot be empty')
 
+    quota_response = _reject_if_over_quota(request)
+    if quota_response is not None:
+        return quota_response
+
     conversation = Conversation.objects.create(owner=request.clerk_user_id, title=content[:60])
     Message.objects.create(conversation=conversation, role='user', content=content)
     return _pane_response(request, conversation, refresh_list=True)
@@ -177,6 +195,10 @@ def create_message(request, conversation_id):
     content = (request.POST.get('content') or '').strip()
     if not content:
         return HttpResponseBadRequest('Content cannot be empty')
+
+    quota_response = _reject_if_over_quota(request)
+    if quota_response is not None:
+        return quota_response
 
     Message.objects.create(conversation=conversation, role='user', content=content)
     return HttpResponse(render_component(request, 'message-pair',
@@ -307,3 +329,48 @@ def stop_stream(request, conversation_id):
     if not updated:
         return HttpResponseNotFound('Conversation not found')
     return HttpResponse(status=204)
+
+
+# ── Billing (Polar.sh) ──────────────────────────────────────────────────────
+
+@require_clerk_auth
+def pricing(request):
+    """GET: plan comparison + checkout buttons. Free users land here automatically
+    (via HX-Redirect, see _reject_if_over_quota) once they exhaust their quota."""
+    return render(request, 'chat/pricing.html', {'plans': billing.plan_display()})
+
+
+@require_clerk_auth
+def start_checkout(request, plan_key):
+    """POST: create a Polar hosted checkout for plan_key and send the browser to
+    it. A plain (non-htmx) form post carrying a normal CSRF token, so Django's
+    redirect is a normal top-level navigation to Polar's off-site checkout page."""
+    if request.method != 'POST':
+        return HttpResponseNotAllowed(['POST'])
+    try:
+        checkout_url = billing.create_checkout_session(
+            request.clerk_user_id, plan_key,
+            success_url=request.build_absolute_uri('/'),
+        )
+    except ValueError:
+        return HttpResponseBadRequest('Unknown plan')
+    return redirect(checkout_url)
+
+
+@csrf_exempt
+def polar_webhook(request):
+    """POST: Polar calls this on subscription lifecycle events. Not behind
+    @require_clerk_auth -- Polar, not a signed-in browser, is the caller here;
+    trust comes from the webhook signature instead."""
+    if request.method != 'POST':
+        return HttpResponseNotAllowed(['POST'])
+    try:
+        event = billing.verify_webhook(request.body, dict(request.headers))
+    except WebhookVerificationError:
+        return HttpResponseForbidden('Invalid signature')
+    except WebhookUnknownTypeError:
+        # A newer Polar event type this SDK version doesn't know about yet --
+        # acknowledge rather than error, so Polar doesn't retry it forever.
+        return HttpResponse(status=200)
+    billing.handle_webhook_event(event)
+    return HttpResponse(status=200)

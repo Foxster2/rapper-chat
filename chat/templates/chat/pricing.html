@@ -1,0 +1,56 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pricing — AI Chat</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.24/dist/full.min.css" rel="stylesheet" type="text/css" />
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <link rel="stylesheet" href="{% static 'chat/css/app.css' %}">
+</head>
+<body class="bg-base-100 text-base-content min-h-screen">
+
+<div class="max-w-4xl mx-auto px-6 py-16">
+    <div class="text-center mb-12">
+        <a href="/" class="text-sm text-base-content/50 hover:text-base-content/80">&larr; Back to chat</a>
+        <p class="serif text-4xl text-base-content mt-4 mb-2">You're out of free messages</p>
+        <p class="text-base-content/60">Free accounts get 20 messages a month. Pick a plan to keep going.</p>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {% for plan in plans %}
+        <div class="rounded-2xl border border-base-300 bg-base-200 p-8 flex flex-col gap-6">
+            <div>
+                <h2 class="serif text-2xl text-base-content">{{ plan.name }}</h2>
+                <p class="text-base-content/60 text-sm mt-1">{{ plan.message_limit }} messages / month</p>
+            </div>
+
+            <div>
+                <p class="text-3xl font-medium text-base-content">${{ plan.monthly_price }}<span class="text-base font-normal text-base-content/50">/mo</span></p>
+                <p class="text-sm text-base-content/50 mt-1">or ${{ plan.annual_price }}/yr &mdash; 10% off</p>
+            </div>
+
+            <div class="flex flex-col gap-2 mt-auto">
+                <form method="post" action="/api/billing/checkout/{{ plan.monthly_plan_key }}/">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-primary w-full">Subscribe monthly</button>
+                </form>
+                <form method="post" action="/api/billing/checkout/{{ plan.annual_plan_key }}/">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-outline w-full">Subscribe yearly</button>
+                </form>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+</body>
+</html>
