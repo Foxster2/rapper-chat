@@ -73,6 +73,9 @@ class Subscriber(models.Model):
     billing_interval = models.CharField(max_length=10, blank=True, default='')  # 'month' | 'year'
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='free')
     current_period_end = models.DateTimeField(null=True, blank=True)
+    # True once a cancellation is scheduled for current_period_end -- status stays
+    # 'active' (and quota unaffected) right up until then, per Polar's own model.
+    cancel_at_period_end = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

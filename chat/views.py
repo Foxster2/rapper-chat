@@ -402,6 +402,32 @@ def change_plan(request, plan_key):
     return redirect('pricing')
 
 
+@require_clerk_auth
+def cancel_subscription(request):
+    """POST: schedule the caller's subscription to cancel at period end (see
+    billing.cancel_subscription), then back to the pricing page."""
+    if request.method != 'POST':
+        return HttpResponseNotAllowed(['POST'])
+    try:
+        billing.cancel_subscription(request.clerk_user_id)
+    except ValueError:
+        return HttpResponseBadRequest('No active subscription to cancel')
+    return redirect('pricing')
+
+
+@require_clerk_auth
+def resume_subscription(request):
+    """POST: undo a pending cancellation (see billing.resume_subscription),
+    then back to the pricing page."""
+    if request.method != 'POST':
+        return HttpResponseNotAllowed(['POST'])
+    try:
+        billing.resume_subscription(request.clerk_user_id)
+    except ValueError:
+        return HttpResponseBadRequest('No active subscription to resume')
+    return redirect('pricing')
+
+
 @csrf_exempt
 def polar_webhook(request):
     """POST: Polar calls this on subscription lifecycle events. Not behind

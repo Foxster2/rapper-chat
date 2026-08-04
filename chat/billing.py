@@ -117,6 +117,7 @@ def _apply_subscription(subscriber, subscription):
     subscriber.polar_customer_id = subscription.customer_id or subscriber.polar_customer_id
     subscriber.polar_subscription_id = subscription.id or subscriber.polar_subscription_id
     subscriber.current_period_end = subscription.current_period_end
+    subscriber.cancel_at_period_end = subscription.cancel_at_period_end
 
     plan_interval = _PRODUCT_ID_TO_PLAN.get(subscription.product_id)
     if plan_interval:
@@ -172,6 +173,38 @@ def change_plan(clerk_user_id, plan_key):
                 'product_id': product_id,
                 'proration_behavior': 'invoice',
             },
+        )
+    _apply_subscription(subscriber, subscription)
+    return subscriber
+
+
+def cancel_subscription(clerk_user_id):
+    """Schedule a subscriber's plan to cancel at the end of their current
+    billing period -- they keep their plan's quota until then; it just doesn't
+    renew. Reversible via resume_subscription() any time before the period ends."""
+    subscriber = get_or_create_subscriber(clerk_user_id)
+    if subscriber.status != 'active' or not subscriber.polar_subscription_id:
+        raise ValueError("No active subscription to cancel")
+
+    with Polar(access_token=settings.POLAR_ACCESS_TOKEN, server=settings.POLAR_SERVER) as polar:
+        subscription = polar.subscriptions.update(
+            id=subscriber.polar_subscription_id,
+            subscription_update={'cancel_at_period_end': True},
+        )
+    _apply_subscription(subscriber, subscription)
+    return subscriber
+
+
+def resume_subscription(clerk_user_id):
+    """Undo a pending cancel_at_period_end before it takes effect."""
+    subscriber = get_or_create_subscriber(clerk_user_id)
+    if subscriber.status != 'active' or not subscriber.polar_subscription_id:
+        raise ValueError("No active subscription to resume")
+
+    with Polar(access_token=settings.POLAR_ACCESS_TOKEN, server=settings.POLAR_SERVER) as polar:
+        subscription = polar.subscriptions.update(
+            id=subscriber.polar_subscription_id,
+            subscription_update={'resume': True},
         )
     _apply_subscription(subscriber, subscription)
     return subscriber

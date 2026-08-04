@@ -31,8 +31,20 @@
 
     {% if current_subscriber %}
     <div class="rounded-2xl border border-primary/30 bg-primary/10 px-6 py-4 mb-8 text-center">
+        {% if current_subscriber.cancel_at_period_end %}
+        <p class="text-base-content">Your <span class="font-medium">{{ current_subscriber.plan|capfirst }}</span> plan cancels on {{ current_subscriber.current_period_end|date:"M j, Y" }} &mdash; you'll keep access until then.</p>
+        <form method="post" action="/api/billing/resume/" class="mt-3">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-sm btn-outline">Resume subscription</button>
+        </form>
+        {% else %}
         <p class="text-base-content">You're on <span class="font-medium">{{ current_subscriber.plan|capfirst }}</span>, billed {{ current_subscriber.billing_interval }}ly &mdash; renews {{ current_subscriber.current_period_end|date:"M j, Y" }}</p>
         <p class="text-sm text-base-content/60 mt-1">Switching plans below charges or credits the price difference immediately.</p>
+        <form method="post" action="/api/billing/cancel/" class="mt-3">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-sm btn-ghost text-base-content/50 hover:text-error">Cancel subscription</button>
+        </form>
+        {% endif %}
     </div>
     {% endif %}
 
