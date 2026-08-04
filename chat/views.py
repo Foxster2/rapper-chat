@@ -46,11 +46,14 @@ def _reject_if_over_quota(request):
     """None if the user may send another message; otherwise a response that sends
     them to the pricing page. Both send views are hx-post forms, so a plain 302
     would just get swapped into the target div by htmx instead of navigating the
-    browser -- HX-Redirect is the header htmx honors to force a full redirect."""
+    browser -- HX-Redirect is the header htmx honors to force a full redirect.
+    The ?reason=limit query param lets the pricing page distinguish this from
+    someone browsing plans proactively, so it doesn't claim a cap was hit when
+    it wasn't."""
     if billing.has_quota(request.clerk_user_id):
         return None
     response = HttpResponse(status=204)
-    response['HX-Redirect'] = '/pricing/'
+    response['HX-Redirect'] = '/pricing/?reason=limit'
     return response
 
 
@@ -331,13 +334,27 @@ def stop_stream(request, conversation_id):
     return HttpResponse(status=204)
 
 
-# ── Billing (Polar.sh) ──────────────────────────────────────────────────────
+# ── Settings & billing (Polar.sh) ────────────────────────────────────────────
+
+@require_clerk_auth
+def settings_page(request):
+    """GET: landing page for the sidebar's Settings link. Just a "Manage
+    subscription" entry point today, kept separate from /pricing/ so that page
+    stays dedicated to plan comparison/checkout rather than doubling as the
+    general settings screen."""
+    return render(request, 'chat/settings.html', {})
+
 
 @require_clerk_auth
 def pricing(request):
-    """GET: plan comparison + checkout buttons. Free users land here automatically
-    (via HX-Redirect, see _reject_if_over_quota) once they exhaust their quota."""
-    return render(request, 'chat/pricing.html', {'plans': billing.plan_display()})
+    """GET: plan comparison + checkout buttons. Reached either by choice (from
+    /settings/) or automatically (via HX-Redirect, see _reject_if_over_quota)
+    once a free user exhausts their quota -- ?reason=limit tells these apart so
+    the headline doesn't claim a cap was hit when the user got here on their own."""
+    return render(request, 'chat/pricing.html', {
+        'plans': billing.plan_display(),
+        'limit_reached': request.GET.get('reason') == 'limit',
+    })
 
 
 @require_clerk_auth

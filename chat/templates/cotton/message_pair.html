@@ -1,6 +1,6 @@
 <c-vars conversation content />
 {% comment %}Returned by create_message: the user's new message + a streaming reply.{% endcomment %}
-<div class="chat chat-enter chat-end max-w-3xl mx-auto w-full px-4">
+<div class="chat chat-enter chat-end max-w-4xl mx-auto w-full px-4">
     <div class="chat-bubble chat-bubble-primary">{{ content }}</div>
 </div>
 <c-streaming-reply :conversation="conversation" />

@@ -20,8 +20,13 @@
 <div class="max-w-4xl mx-auto px-6 py-16">
     <div class="text-center mb-12">
         <a href="/" class="text-sm text-base-content/50 hover:text-base-content/80">&larr; Back to chat</a>
+        {% if limit_reached %}
         <p class="serif text-4xl text-base-content mt-4 mb-2">You're out of free messages</p>
         <p class="text-base-content/60">Free accounts get 20 messages a month. Pick a plan to keep going.</p>
+        {% else %}
+        <p class="serif text-4xl text-base-content mt-4 mb-2">Choose your plan</p>
+        <p class="text-base-content/60">Upgrade any time to raise your monthly message limit.</p>
+        {% endif %}
     </div>
 
     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">

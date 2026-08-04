@@ -19,7 +19,8 @@ urlpatterns = [
     # Model-written chat title, requested once the opening reply has landed
     path('api/conversations/<int:conversation_id>/title/', views.conversation_title, name='conversation_title'),
 
-    # Billing (Polar.sh)
+    # Settings & billing (Polar.sh)
+    path('settings/', views.settings_page, name='settings'),
     path('pricing/', views.pricing, name='pricing'),
     path('api/billing/checkout/<str:plan_key>/', views.start_checkout, name='start_checkout'),
     path('api/billing/webhook/', views.polar_webhook, name='polar_webhook'),
