@@ -206,7 +206,13 @@ def cancel_subscription(clerk_user_id):
 
 
 def resume_subscription(clerk_user_id):
-    """Undo a pending cancel_at_period_end before it takes effect."""
+    """Undo a pending cancel_at_period_end before it takes effect. This is NOT
+    the SDK's {'resume': True} action -- that undoes a *paused* subscription
+    (a separate billing-pause feature we don't use), and 403s with
+    'NotPausedSubscription' against one that's merely cancel-at-period-end.
+    Un-cancelling is just calling the same update with the flag flipped back,
+    which is also why we're already subscribed to the subscription.uncanceled
+    webhook event (see the Polar dashboard webhook config)."""
     subscriber = get_or_create_subscriber(clerk_user_id)
     if subscriber.status != 'active' or not subscriber.polar_subscription_id:
         raise ValueError("No active subscription to resume")
@@ -215,7 +221,7 @@ def resume_subscription(clerk_user_id):
         with Polar(access_token=settings.POLAR_ACCESS_TOKEN, server=settings.POLAR_SERVER) as polar:
             subscription = polar.subscriptions.update(
                 id=subscriber.polar_subscription_id,
-                subscription_update={'resume': True},
+                subscription_update={'cancel_at_period_end': False},
             )
     except PolarError as e:
         raise ValueError(f"Polar resume failed: {e}") from e
