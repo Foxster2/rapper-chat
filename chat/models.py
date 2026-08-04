@@ -76,6 +76,11 @@ class Subscriber(models.Model):
     # True once a cancellation is scheduled for current_period_end -- status stays
     # 'active' (and quota unaffected) right up until then, per Polar's own model.
     cancel_at_period_end = models.BooleanField(default=False)
+    # Set when resume_with_plan() schedules a plan switch for the next renewal
+    # (Polar's Subscription.pending_update) -- blank once nothing is pending.
+    # Applies at current_period_end, so no separate date field is needed.
+    pending_plan = models.CharField(max_length=10, blank=True, default='')
+    pending_billing_interval = models.CharField(max_length=10, blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

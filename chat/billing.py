@@ -127,6 +127,13 @@ def _apply_subscription(subscriber, subscription):
     if plan_interval:
         subscriber.plan, subscriber.billing_interval = plan_interval
 
+    # pending_update is set while a next_period plan change (resume_with_plan)
+    # hasn't taken effect yet, and clears itself once it has -- recomputing it
+    # unconditionally here means this needs no separate "clear" step anywhere.
+    pending = subscription.pending_update
+    pending_interval = _PRODUCT_ID_TO_PLAN.get(pending.product_id) if pending else None
+    subscriber.pending_plan, subscriber.pending_billing_interval = pending_interval or ('', '')
+
     subscriber.save()
 
 

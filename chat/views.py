@@ -363,6 +363,8 @@ def pricing(request):
     for plan in plans:
         plan['monthly_is_current'] = bool(current and current.plan == plan['key'] and current.billing_interval == 'month')
         plan['annual_is_current'] = bool(current and current.plan == plan['key'] and current.billing_interval == 'year')
+        plan['monthly_is_pending'] = bool(current and current.pending_plan == plan['key'] and current.pending_billing_interval == 'month')
+        plan['annual_is_pending'] = bool(current and current.pending_plan == plan['key'] and current.pending_billing_interval == 'year')
 
     return render(request, 'chat/pricing.html', {
         'plans': plans,
