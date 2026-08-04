@@ -29,6 +29,13 @@
         {% endif %}
     </div>
 
+    {% if current_subscriber %}
+    <div class="rounded-2xl border border-primary/30 bg-primary/10 px-6 py-4 mb-8 text-center">
+        <p class="text-base-content">You're on <span class="font-medium">{{ current_subscriber.plan|capfirst }}</span>, billed {{ current_subscriber.billing_interval }}ly &mdash; renews {{ current_subscriber.current_period_end|date:"M j, Y" }}</p>
+        <p class="text-sm text-base-content/60 mt-1">Switching plans below charges or credits the price difference immediately.</p>
+    </div>
+    {% endif %}
+
     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
         {% for plan in plans %}
         <div class="rounded-2xl border border-base-300 bg-base-200 p-8 flex flex-col gap-6">
@@ -43,14 +50,33 @@
             </div>
 
             <div class="flex flex-col gap-2 mt-auto">
+                {% if plan.monthly_is_current %}
+                <button type="button" disabled class="btn btn-primary w-full">Current plan</button>
+                {% elif current_subscriber %}
+                <form method="post" action="/api/billing/change-plan/{{ plan.monthly_plan_key }}/">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-primary w-full">Switch to monthly</button>
+                </form>
+                {% else %}
                 <form method="post" action="/api/billing/checkout/{{ plan.monthly_plan_key }}/">
                     {% csrf_token %}
                     <button type="submit" class="btn btn-primary w-full">Subscribe monthly</button>
                 </form>
+                {% endif %}
+
+                {% if plan.annual_is_current %}
+                <button type="button" disabled class="btn btn-outline w-full">Current plan</button>
+                {% elif current_subscriber %}
+                <form method="post" action="/api/billing/change-plan/{{ plan.annual_plan_key }}/">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-outline w-full">Switch to yearly</button>
+                </form>
+                {% else %}
                 <form method="post" action="/api/billing/checkout/{{ plan.annual_plan_key }}/">
                     {% csrf_token %}
                     <button type="submit" class="btn btn-outline w-full">Subscribe yearly</button>
                 </form>
+                {% endif %}
             </div>
         </div>
         {% endfor %}

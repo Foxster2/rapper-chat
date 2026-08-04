@@ -109,6 +109,22 @@ def verify_webhook(body, headers):
     return validate_event(body=body, headers=headers, secret=settings.POLAR_WEBHOOK_SECRET)
 
 
+def _apply_subscription(subscriber, subscription):
+    """Copy a polar_sdk Subscription's state onto a Subscriber row. Shared by the
+    webhook handler and change_plan(), since a direct subscriptions.update() call
+    returns the same Subscription shape a subscription.* webhook's data does."""
+    subscriber.status = subscription.status.value
+    subscriber.polar_customer_id = subscription.customer_id or subscriber.polar_customer_id
+    subscriber.polar_subscription_id = subscription.id or subscriber.polar_subscription_id
+    subscriber.current_period_end = subscription.current_period_end
+
+    plan_interval = _PRODUCT_ID_TO_PLAN.get(subscription.product_id)
+    if plan_interval:
+        subscriber.plan, subscriber.billing_interval = plan_interval
+
+    subscriber.save()
+
+
 def handle_webhook_event(event):
     """Sync a Subscriber row from a verified Polar subscription webhook event.
     Unrelated event types (e.g. order.*, customer.*) are ignored. The discriminated
@@ -131,13 +147,31 @@ def handle_webhook_event(event):
     if subscriber is None:
         return
 
-    subscriber.status = subscription.status.value
-    subscriber.polar_customer_id = polar_customer_id or subscriber.polar_customer_id
-    subscriber.polar_subscription_id = subscription.id or subscriber.polar_subscription_id
-    subscriber.current_period_end = subscription.current_period_end
+    _apply_subscription(subscriber, subscription)
 
-    plan_interval = _PRODUCT_ID_TO_PLAN.get(subscription.product_id)
-    if plan_interval:
-        subscriber.plan, subscriber.billing_interval = plan_interval
 
-    subscriber.save()
+def change_plan(clerk_user_id, plan_key):
+    """Move an already-active subscriber onto a different plan/interval by
+    updating their EXISTING Polar subscription in place, rather than starting a
+    second, competing subscription through checkout. proration_behavior='invoice'
+    charges (upgrade) or credits (downgrade) the price difference immediately;
+    the renewal date itself is untouched by this behavior."""
+    entry = PLAN_PRODUCTS.get(plan_key)
+    if not entry or not entry[2]:
+        raise ValueError(f"Unknown or unconfigured plan: {plan_key}")
+    _, _, product_id = entry
+
+    subscriber = get_or_create_subscriber(clerk_user_id)
+    if subscriber.status != 'active' or not subscriber.polar_subscription_id:
+        raise ValueError("No active subscription to change")
+
+    with Polar(access_token=settings.POLAR_ACCESS_TOKEN, server=settings.POLAR_SERVER) as polar:
+        subscription = polar.subscriptions.update(
+            id=subscriber.polar_subscription_id,
+            subscription_update={
+                'product_id': product_id,
+                'proration_behavior': 'invoice',
+            },
+        )
+    _apply_subscription(subscriber, subscription)
+    return subscriber

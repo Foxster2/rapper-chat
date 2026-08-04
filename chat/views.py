@@ -350,10 +350,24 @@ def pricing(request):
     """GET: plan comparison + checkout buttons. Reached either by choice (from
     /settings/) or automatically (via HX-Redirect, see _reject_if_over_quota)
     once a free user exhausts their quota -- ?reason=limit tells these apart so
-    the headline doesn't claim a cap was hit when the user got here on their own."""
+    the headline doesn't claim a cap was hit when the user got here on their own.
+
+    Already-active subscribers see their current plan marked and get "Switch to"
+    buttons (change_plan) on the rest instead of "Subscribe" (start_checkout), so
+    upgrading/downgrading changes their existing subscription rather than
+    starting a second, competing one."""
+    subscriber = billing.get_or_create_subscriber(request.clerk_user_id)
+    current = subscriber if subscriber.status == 'active' else None
+
+    plans = billing.plan_display()
+    for plan in plans:
+        plan['monthly_is_current'] = bool(current and current.plan == plan['key'] and current.billing_interval == 'month')
+        plan['annual_is_current'] = bool(current and current.plan == plan['key'] and current.billing_interval == 'year')
+
     return render(request, 'chat/pricing.html', {
-        'plans': billing.plan_display(),
+        'plans': plans,
         'limit_reached': request.GET.get('reason') == 'limit',
+        'current_subscriber': current,
     })
 
 
@@ -372,6 +386,20 @@ def start_checkout(request, plan_key):
     except ValueError:
         return HttpResponseBadRequest('Unknown plan')
     return redirect(checkout_url)
+
+
+@require_clerk_auth
+def change_plan(request, plan_key):
+    """POST: move the caller's existing active subscription onto plan_key in
+    place (see billing.change_plan), then send them back to the pricing page to
+    see the result."""
+    if request.method != 'POST':
+        return HttpResponseNotAllowed(['POST'])
+    try:
+        billing.change_plan(request.clerk_user_id, plan_key)
+    except ValueError:
+        return HttpResponseBadRequest('Unknown plan, or no active subscription to change')
+    return redirect('pricing')
 
 
 @csrf_exempt
