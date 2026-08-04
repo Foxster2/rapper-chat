@@ -403,6 +403,19 @@ def change_plan(request, plan_key):
 
 
 @require_clerk_auth
+def resume_with_plan(request, plan_key):
+    """POST: undo a pending cancellation while switching to plan_key, effective
+    at the next renewal rather than charged now (see billing.resume_with_plan)."""
+    if request.method != 'POST':
+        return HttpResponseNotAllowed(['POST'])
+    try:
+        billing.resume_with_plan(request.clerk_user_id, plan_key)
+    except ValueError as e:
+        return HttpResponseBadRequest(str(e))
+    return redirect('pricing')
+
+
+@require_clerk_auth
 def cancel_subscription(request):
     """POST: schedule the caller's subscription to cancel at period end (see
     billing.cancel_subscription), then back to the pricing page."""

@@ -169,6 +169,8 @@ def change_plan(clerk_user_id, plan_key):
     subscriber = get_or_create_subscriber(clerk_user_id)
     if subscriber.status != 'active' or not subscriber.polar_subscription_id:
         raise ValueError("No active subscription to change")
+    if subscriber.cancel_at_period_end:
+        raise ValueError("Subscription is pending cancellation -- use resume_with_plan instead")
 
     try:
         with Polar(access_token=settings.POLAR_ACCESS_TOKEN, server=settings.POLAR_SERVER) as polar:
@@ -181,6 +183,42 @@ def change_plan(clerk_user_id, plan_key):
             )
     except PolarError as e:
         raise ValueError(f"Polar plan change failed: {e}") from e
+    _apply_subscription(subscriber, subscription)
+    return subscriber
+
+
+def resume_with_plan(clerk_user_id, plan_key):
+    """Undo a pending cancellation while switching to a different plan/interval
+    at the same time. Unlike change_plan(), the switch takes effect at the next
+    renewal (proration_behavior='next_period') rather than charging immediately
+    -- someone who just clicked cancel shouldn't be billed again the moment they
+    change their mind about which plan to stay on. Two separate update calls:
+    Polar's update payload is a discriminated union (cancel vs. product-change
+    are distinct operations), so they can't be combined into one request."""
+    entry = PLAN_PRODUCTS.get(plan_key)
+    if not entry or not entry[2]:
+        raise ValueError(f"Unknown or unconfigured plan: {plan_key}")
+    _, _, product_id = entry
+
+    subscriber = get_or_create_subscriber(clerk_user_id)
+    if subscriber.status != 'active' or not subscriber.polar_subscription_id:
+        raise ValueError("No active subscription to resume")
+
+    try:
+        with Polar(access_token=settings.POLAR_ACCESS_TOKEN, server=settings.POLAR_SERVER) as polar:
+            polar.subscriptions.update(
+                id=subscriber.polar_subscription_id,
+                subscription_update={'cancel_at_period_end': False},
+            )
+            subscription = polar.subscriptions.update(
+                id=subscriber.polar_subscription_id,
+                subscription_update={
+                    'product_id': product_id,
+                    'proration_behavior': 'next_period',
+                },
+            )
+    except PolarError as e:
+        raise ValueError(f"Polar resume failed: {e}") from e
     _apply_subscription(subscriber, subscription)
     return subscriber
 

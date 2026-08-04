@@ -33,6 +33,7 @@
     <div class="rounded-2xl border border-primary/30 bg-primary/10 px-6 py-4 mb-8 text-center">
         {% if current_subscriber.cancel_at_period_end %}
         <p class="text-base-content">Your <span class="font-medium">{{ current_subscriber.plan|capfirst }}</span> plan cancels on {{ current_subscriber.current_period_end|date:"M j, Y" }} &mdash; you'll keep access until then.</p>
+        <p class="text-sm text-base-content/60 mt-1">Picking a plan below resumes your subscription on that plan at renewal, at no charge now.</p>
         <form method="post" action="/api/billing/resume/" class="mt-3">
             {% csrf_token %}
             <button type="submit" class="btn btn-sm btn-outline">Resume subscription</button>
@@ -64,6 +65,11 @@
             <div class="flex flex-col gap-2 mt-auto">
                 {% if plan.monthly_is_current %}
                 <button type="button" disabled class="btn btn-primary w-full">Current plan</button>
+                {% elif current_subscriber.cancel_at_period_end %}
+                <form method="post" action="/api/billing/resume-with-plan/{{ plan.monthly_plan_key }}/">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-primary w-full">Resume on monthly</button>
+                </form>
                 {% elif current_subscriber %}
                 <form method="post" action="/api/billing/change-plan/{{ plan.monthly_plan_key }}/">
                     {% csrf_token %}
@@ -78,6 +84,11 @@
 
                 {% if plan.annual_is_current %}
                 <button type="button" disabled class="btn btn-outline w-full">Current plan</button>
+                {% elif current_subscriber.cancel_at_period_end %}
+                <form method="post" action="/api/billing/resume-with-plan/{{ plan.annual_plan_key }}/">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-outline w-full">Resume on yearly</button>
+                </form>
                 {% elif current_subscriber %}
                 <form method="post" action="/api/billing/change-plan/{{ plan.annual_plan_key }}/">
                     {% csrf_token %}

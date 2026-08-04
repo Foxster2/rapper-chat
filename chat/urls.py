@@ -24,6 +24,7 @@ urlpatterns = [
     path('pricing/', views.pricing, name='pricing'),
     path('api/billing/checkout/<str:plan_key>/', views.start_checkout, name='start_checkout'),
     path('api/billing/change-plan/<str:plan_key>/', views.change_plan, name='change_plan'),
+    path('api/billing/resume-with-plan/<str:plan_key>/', views.resume_with_plan, name='resume_with_plan'),
     path('api/billing/cancel/', views.cancel_subscription, name='cancel_subscription'),
     path('api/billing/resume/', views.resume_subscription, name='resume_subscription'),
     path('api/billing/webhook/', views.polar_webhook, name='polar_webhook'),
