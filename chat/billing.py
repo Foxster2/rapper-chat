@@ -4,6 +4,7 @@ from datetime import timedelta
 from django.conf import settings
 from django.utils import timezone
 from polar_sdk import Polar
+from polar_sdk.models.polarerror import PolarError
 from polar_sdk.webhooks import validate_event
 
 from .models import Message, Subscriber
@@ -94,12 +95,15 @@ def create_checkout_session(clerk_user_id, plan_key, success_url):
         raise ValueError(f"Unknown or unconfigured plan: {plan_key}")
     _, _, product_id = entry
 
-    with Polar(access_token=settings.POLAR_ACCESS_TOKEN, server=settings.POLAR_SERVER) as polar:
-        checkout = polar.checkouts.create(request={
-            'products': [product_id],
-            'external_customer_id': clerk_user_id,
-            'success_url': success_url,
-        })
+    try:
+        with Polar(access_token=settings.POLAR_ACCESS_TOKEN, server=settings.POLAR_SERVER) as polar:
+            checkout = polar.checkouts.create(request={
+                'products': [product_id],
+                'external_customer_id': clerk_user_id,
+                'success_url': success_url,
+            })
+    except PolarError as e:
+        raise ValueError(f"Polar checkout failed: {e}") from e
     return checkout.url
 
 
@@ -166,14 +170,17 @@ def change_plan(clerk_user_id, plan_key):
     if subscriber.status != 'active' or not subscriber.polar_subscription_id:
         raise ValueError("No active subscription to change")
 
-    with Polar(access_token=settings.POLAR_ACCESS_TOKEN, server=settings.POLAR_SERVER) as polar:
-        subscription = polar.subscriptions.update(
-            id=subscriber.polar_subscription_id,
-            subscription_update={
-                'product_id': product_id,
-                'proration_behavior': 'invoice',
-            },
-        )
+    try:
+        with Polar(access_token=settings.POLAR_ACCESS_TOKEN, server=settings.POLAR_SERVER) as polar:
+            subscription = polar.subscriptions.update(
+                id=subscriber.polar_subscription_id,
+                subscription_update={
+                    'product_id': product_id,
+                    'proration_behavior': 'invoice',
+                },
+            )
+    except PolarError as e:
+        raise ValueError(f"Polar plan change failed: {e}") from e
     _apply_subscription(subscriber, subscription)
     return subscriber
 
@@ -186,11 +193,14 @@ def cancel_subscription(clerk_user_id):
     if subscriber.status != 'active' or not subscriber.polar_subscription_id:
         raise ValueError("No active subscription to cancel")
 
-    with Polar(access_token=settings.POLAR_ACCESS_TOKEN, server=settings.POLAR_SERVER) as polar:
-        subscription = polar.subscriptions.update(
-            id=subscriber.polar_subscription_id,
-            subscription_update={'cancel_at_period_end': True},
-        )
+    try:
+        with Polar(access_token=settings.POLAR_ACCESS_TOKEN, server=settings.POLAR_SERVER) as polar:
+            subscription = polar.subscriptions.update(
+                id=subscriber.polar_subscription_id,
+                subscription_update={'cancel_at_period_end': True},
+            )
+    except PolarError as e:
+        raise ValueError(f"Polar cancellation failed: {e}") from e
     _apply_subscription(subscriber, subscription)
     return subscriber
 
@@ -201,10 +211,13 @@ def resume_subscription(clerk_user_id):
     if subscriber.status != 'active' or not subscriber.polar_subscription_id:
         raise ValueError("No active subscription to resume")
 
-    with Polar(access_token=settings.POLAR_ACCESS_TOKEN, server=settings.POLAR_SERVER) as polar:
-        subscription = polar.subscriptions.update(
-            id=subscriber.polar_subscription_id,
-            subscription_update={'resume': True},
-        )
+    try:
+        with Polar(access_token=settings.POLAR_ACCESS_TOKEN, server=settings.POLAR_SERVER) as polar:
+            subscription = polar.subscriptions.update(
+                id=subscriber.polar_subscription_id,
+                subscription_update={'resume': True},
+            )
+    except PolarError as e:
+        raise ValueError(f"Polar resume failed: {e}") from e
     _apply_subscription(subscriber, subscription)
     return subscriber

@@ -383,8 +383,8 @@ def start_checkout(request, plan_key):
             request.clerk_user_id, plan_key,
             success_url=request.build_absolute_uri('/'),
         )
-    except ValueError:
-        return HttpResponseBadRequest('Unknown plan')
+    except ValueError as e:
+        return HttpResponseBadRequest(str(e))
     return redirect(checkout_url)
 
 
@@ -397,8 +397,8 @@ def change_plan(request, plan_key):
         return HttpResponseNotAllowed(['POST'])
     try:
         billing.change_plan(request.clerk_user_id, plan_key)
-    except ValueError:
-        return HttpResponseBadRequest('Unknown plan, or no active subscription to change')
+    except ValueError as e:
+        return HttpResponseBadRequest(str(e))
     return redirect('pricing')
 
 
@@ -410,8 +410,8 @@ def cancel_subscription(request):
         return HttpResponseNotAllowed(['POST'])
     try:
         billing.cancel_subscription(request.clerk_user_id)
-    except ValueError:
-        return HttpResponseBadRequest('No active subscription to cancel')
+    except ValueError as e:
+        return HttpResponseBadRequest(str(e))
     return redirect('pricing')
 
 
@@ -423,8 +423,8 @@ def resume_subscription(request):
         return HttpResponseNotAllowed(['POST'])
     try:
         billing.resume_subscription(request.clerk_user_id)
-    except ValueError:
-        return HttpResponseBadRequest('No active subscription to resume')
+    except ValueError as e:
+        return HttpResponseBadRequest(str(e))
     return redirect('pricing')
 
 
