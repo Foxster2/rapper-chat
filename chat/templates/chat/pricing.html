@@ -29,6 +29,13 @@
         {% endif %}
     </div>
 
+    {% if session_expired %}
+    <div class="rounded-2xl border border-warning/40 bg-warning/10 px-6 py-4 mb-8 text-center">
+        <p class="text-base-content">Your session had expired, so that didn't go through.</p>
+        <p class="text-sm text-base-content/60 mt-1">Nothing was charged or changed &mdash; you're signed back in, so please try again.</p>
+    </div>
+    {% endif %}
+
     {% if current_subscriber %}
     <div class="rounded-2xl border border-primary/30 bg-primary/10 px-6 py-4 mb-8 text-center">
         {% if current_subscriber.cancel_at_period_end %}
@@ -113,6 +120,14 @@
         {% endfor %}
     </div>
 </div>
+
+<!-- Keeps the Clerk session cookie fresh while the user weighs up plans --
+     without it the ~60s token expires mid-decision and the form post below
+     lands unauthenticated. -->
+<script>
+    window.APP_CONFIG = { clerkPublishableKey: "{{ CLERK_PUBLISHABLE_KEY }}" };
+</script>
+<script src="{% static 'chat/js/clerk-session.js' %}"></script>
 
 </body>
 </html>

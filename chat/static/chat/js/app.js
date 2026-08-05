@@ -269,61 +269,49 @@ document.body.addEventListener('htmx:responseError', async (e) => {
     });
 });
 
-/* ══ LOAD CLERK ══════════════════════════════════════════════
-   window.APP_CONFIG.clerkPublishableKey is set by a small inline script in
-   index.html (server-rendered value can't live in this static file). */
-(function () {
-    const publishableKey = window.APP_CONFIG?.clerkPublishableKey || '';
-    if (!publishableKey) {
-        showError('CLERK_PUBLISHABLE_KEY is missing from your .env file.');
+/* Resolve a ?next= target against this origin and keep it only if it stayed
+   here. The server only ever emits a relative path, but the URL bar is the
+   user's to edit, and forwarding to whatever it says would turn the re-auth
+   hop into an open redirect. Absolute, protocol-relative (`//evil.com`) and
+   backslash-smuggled URLs all resolve to a foreign origin and are dropped.
+   The shell itself is refused too, since that's where we already are. */
+function safeNextPath(raw) {
+    if (!raw) return null;
+    let url;
+    try { url = new URL(raw, location.origin); } catch (e) { return null; }
+    if (url.origin !== location.origin) return null;
+    return url.pathname === '/' ? null : url.pathname + url.search;
+}
+
+/* ══ CHAT SHELL STARTUP ══════════════════════════════════════
+   Loading Clerk and holding the session open is clerk-session.js's job (it
+   runs on the billing pages too); what's left here is the wiring only this
+   page has, which can't run until there's a user to render. */
+window.clerkReady.then(async () => {
+    /* Landed here only to re-authenticate (see _reauth_redirect): mint a fresh
+       token so the cookie is renewed before we leave -- Clerk.load() alone
+       doesn't guarantee that -- then hand the browser back to where it was
+       going. replace(), not assign(), so Back doesn't return to this hop. */
+    const next = safeNextPath(new URLSearchParams(location.search).get('next'));
+    if (next) {
+        document.getElementById('loading-text').innerText = 'Restoring your session…';
+        await window.Clerk.session.getToken({ skipCache: true });
+        location.replace(next);
         return;
     }
-    try {
-        const domain = atob(publishableKey.split('_')[2]).slice(0, -1);
-        const s = document.createElement('script');
-        s.setAttribute('data-clerk-publishable-key', publishableKey);
-        s.async = true;
-        s.src = `https://${domain}/npm/@clerk/clerk-js@4/dist/clerk.browser.js`;
-        s.crossOrigin = 'anonymous';
-        s.addEventListener('load', initializeClerk);
-        s.addEventListener('error', () => showError(`Failed to load Clerk script from ${domain}`));
-        document.body.appendChild(s);
-    } catch (e) {
-        showError('Clerk Publishable Key format is invalid.');
-    }
-})();
 
-async function initializeClerk() {
-    try {
-        await window.Clerk.load();
-        if (!window.Clerk.user) {
-            document.getElementById('loading-text').innerText = 'Redirecting to sign in…';
-            window.Clerk.redirectToSignIn();
-            return;
-        }
-        /* mount Clerk user button */
-        window.Clerk.mountUserButton(document.getElementById('user-button'));
+    /* mount Clerk user button */
+    window.Clerk.mountUserButton(document.getElementById('user-button'));
 
-        /* welcome name */
-        const firstName = window.Clerk.user.firstName || window.Clerk.user.username || '';
-        document.getElementById('username-display').innerText = firstName;
-        document.getElementById('welcome-name').innerText = firstName || 'there';
+    /* welcome name */
+    const firstName = window.Clerk.user.firstName || window.Clerk.user.username || '';
+    document.getElementById('username-display').innerText = firstName;
+    document.getElementById('welcome-name').innerText = firstName || 'there';
 
-        /* show app */
-        document.getElementById('loading-screen').style.display = 'none';
-        document.getElementById('app-container').style.display = 'flex';
+    /* show app */
+    document.getElementById('loading-screen').style.display = 'none';
+    document.getElementById('app-container').style.display = 'flex';
 
-        /* load the sidebar list now that the Clerk session cookie is fresh */
-        htmx.ajax('GET', '/api/conversations/partial/', { target: '#conversations-list', swap: 'innerHTML' });
-    } catch (err) {
-        showError(err.message || 'Clerk failed to initialize.');
-    }
-}
-
-/* ══ ERROR HELPER ════════════════════════════════════════ */
-function showError(msg) {
-    const spinner = document.getElementById('loading-screen').querySelector('.loading');
-    const text    = document.getElementById('loading-text');
-    if (spinner) spinner.style.display = 'none';
-    if (text)    text.innerHTML = `<span class="text-error font-semibold">Error</span><br><span class="text-xs">${msg}</span>`;
-}
+    /* load the sidebar list now that the Clerk session cookie is fresh */
+    htmx.ajax('GET', '/api/conversations/partial/', { target: '#conversations-list', swap: 'innerHTML' });
+});

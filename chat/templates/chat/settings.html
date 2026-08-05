@@ -32,5 +32,12 @@
     </div>
 </div>
 
+<!-- Same reason as the pricing page: this page has to refresh the Clerk
+     session cookie itself, or it expires while it sits open. -->
+<script>
+    window.APP_CONFIG = { clerkPublishableKey: "{{ CLERK_PUBLISHABLE_KEY }}" };
+</script>
+<script src="{% static 'chat/js/clerk-session.js' %}"></script>
+
 </body>
 </html>

@@ -1,10 +1,14 @@
 import time
+from urllib.parse import urlsplit
+
 from django.shortcuts import render, redirect
 from django.http import (
     HttpResponse, JsonResponse, StreamingHttpResponse, QueryDict,
     HttpResponseBadRequest, HttpResponseForbidden, HttpResponseNotFound, HttpResponseNotAllowed,
 )
 from django.conf import settings
+from django.urls import reverse
+from django.utils.http import url_has_allowed_host_and_scheme, urlencode
 from django.views.decorators.csrf import csrf_exempt
 from django_cotton import render_component
 from django_htmx.http import trigger_client_event
@@ -29,10 +33,56 @@ STOP_POLL_INTERVAL = 0.1  # seconds
 STOPPED_EMPTY_HTML = '<p class="italic text-base-content/50">Response stopped.</p>'
 
 
+def _same_origin_path(url, request):
+    """The path+query of url if it points back at this site, else None. Returning
+    only the path (never the host) means the result is relative by construction,
+    so it can't send anyone off-site even if the check above it ever slipped."""
+    if not url:
+        return None
+    if not url_has_allowed_host_and_scheme(url, allowed_hosts={request.get_host()},
+                                           require_https=request.is_secure()):
+        return None
+    parts = urlsplit(url)
+    return parts.path + (f'?{parts.query}' if parts.query else '')
+
+
+def _with_reason(url, reason):
+    parts = urlsplit(url)
+    query = QueryDict(parts.query, mutable=True)
+    query['reason'] = reason
+    return f'{parts.path}?{query.urlencode()}'
+
+
+def _reauth_redirect(request):
+    """Bounce a browser whose session cookie expired through the chat shell,
+    which loads clerk-js, renews the cookie, and forwards on to ?next=.
+
+    A safe request resumes exactly where it was headed, so an expired cookie
+    costs nothing but a flicker. An unsafe one can't be replayed that way --
+    quietly re-submitting a billing action the user can no longer see is far
+    worse than asking them to click again -- so it returns to the page holding
+    the form, flagged so that page can explain why nothing happened.
+    """
+    if request.method in ('GET', 'HEAD'):
+        next_url = request.get_full_path()
+    else:
+        referer = _same_origin_path(request.META.get('HTTP_REFERER', ''), request)
+        next_url = _with_reason(referer or reverse('index'), 'session_expired')
+    return redirect(f"{reverse('index')}?{urlencode({'next': next_url})}")
+
+
 def require_clerk_auth(view_func):
-    """Reject the request with 401 unless the Clerk middleware authenticated the user."""
+    """Reject the request unless the Clerk middleware authenticated the user.
+
+    A browser navigating here is sent through the re-auth hop above rather than
+    shown the JSON body, so an expired session self-heals instead of dead-ending
+    on a bare error page. Everything else -- htmx, EventSource -- keeps the 401,
+    because the client's retry handler is wired to that status (see app.js).
+    """
     def _wrapped_view(request, *args, **kwargs):
         if not request.clerk_user_id:
+            if not request.htmx and 'text/html' in request.headers.get('Accept', ''):
+                return _reauth_redirect(request)
             return JsonResponse({'error': 'Unauthorized. Please sign in.'}, status=401)
         return view_func(request, *args, **kwargs)
     return _wrapped_view
@@ -342,7 +392,9 @@ def settings_page(request):
     subscription" entry point today, kept separate from /pricing/ so that page
     stays dedicated to plan comparison/checkout rather than doubling as the
     general settings screen."""
-    return render(request, 'chat/settings.html', {})
+    return render(request, 'chat/settings.html', {
+        'CLERK_PUBLISHABLE_KEY': settings.CLERK_PUBLISHABLE_KEY,
+    })
 
 
 @require_clerk_auth
@@ -369,7 +421,9 @@ def pricing(request):
     return render(request, 'chat/pricing.html', {
         'plans': plans,
         'limit_reached': request.GET.get('reason') == 'limit',
+        'session_expired': request.GET.get('reason') == 'session_expired',
         'current_subscriber': current,
+        'CLERK_PUBLISHABLE_KEY': settings.CLERK_PUBLISHABLE_KEY,
     })
 
 
