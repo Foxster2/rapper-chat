@@ -31,9 +31,9 @@ SYSTEM_PROMPT = (
 
 # Ceiling on model->tool->model round trips within a single reply. Each hop is a
 # billed request, so this is the backstop against a model that keeps searching
-# instead of answering. Counts every graph step, so 8 leaves room for roughly
-# three searches before the graph stops.
-RECURSION_LIMIT = 8
+# instead of answering. Counts every graph step, so the default 8 leaves room
+# for roughly three searches before the graph stops.
+RECURSION_LIMIT = settings.CHAT_AGENT_RECURSION_LIMIT
 
 TITLE_PROMPT = (
     "You name chat conversations. Given the opening exchange, reply with a title "

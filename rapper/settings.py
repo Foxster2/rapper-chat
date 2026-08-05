@@ -161,6 +161,22 @@ OPENROUTER_MODEL = os.getenv('OPENROUTER_MODEL', 'meta-llama/llama-3.3-70b-instr
 # and an empty string would otherwise be taken as a real model name.
 OPENROUTER_TITLE_MODEL = os.getenv('OPENROUTER_TITLE_MODEL') or 'inclusionai/ling-3.0-flash:free'
 
+def _int_env(name, default):
+    """An integer setting from the environment, tolerant of a key that is present
+    but blank -- which is how .env.example ships every optional value, and what
+    int('') would otherwise turn into a crash at import time."""
+    try:
+        return int(os.getenv(name) or default)
+    except ValueError:
+        print(f'{name} is not a number, falling back to {default}')
+        return default
+
+
+# How many model -> tool -> model round trips one reply may take. Every hop is a
+# billed request, so this is the ceiling on what a single message can cost when
+# the model keeps searching instead of answering.
+CHAT_AGENT_RECURSION_LIMIT = _int_env('CHAT_AGENT_RECURSION_LIMIT', 8)
+
 # The evaluator: a second model that scores the user's prompt and the assistant's
 # answer, and whose critiques are fed back into later turns (see chat/evaluator.py).
 # It costs two extra model calls per message, so it is a switch rather than a
@@ -171,6 +187,18 @@ CHAT_EVALUATOR_ENABLED = os.getenv('CHAT_EVALUATOR_ENABLED', 'true').lower() not
 # preferring a small fast non-reasoning model over the one answering the user.
 OPENROUTER_EVALUATOR_MODEL = (
     os.getenv('OPENROUTER_EVALUATOR_MODEL') or 'inclusionai/ling-3.0-flash:free')
+
+# How much of the conversation each critique is shown. A critic that cannot see
+# what a follow-up refers to reports the answer as invented, so these are the
+# limits to raise if critiques start complaining about missing context. The
+# total is a hard ceiling: without it the other two multiply.
+CHAT_EVALUATOR_CONTEXT_TURNS = _int_env('CHAT_EVALUATOR_CONTEXT_TURNS', 10)
+CHAT_EVALUATOR_CONTEXT_CHARS = _int_env('CHAT_EVALUATOR_CONTEXT_CHARS', 2000)
+CHAT_EVALUATOR_CONTEXT_TOTAL_CHARS = _int_env('CHAT_EVALUATOR_CONTEXT_TOTAL_CHARS', 9000)
+# Output ceiling for one critique, reasoning tokens included. Worth raising if
+# critiques go missing: a reasoning model spends this budget thinking first, and
+# running out mid-thought returns an empty string rather than an error.
+CHAT_EVALUATOR_MAX_TOKENS = _int_env('CHAT_EVALUATOR_MAX_TOKENS', 1200)
 
 # How much of a conversation is replayed to the model on each turn. The whole
 # history is re-sent every time, so left unbounded a conversation's input cost

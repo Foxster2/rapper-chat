@@ -76,14 +76,6 @@ RESPONSE_EVAL_SYSTEM = (
     "time.\n\n" + _SCORE_FORMAT
 )
 
-# Covers reasoning tokens as well as the critique itself. The default evaluator
-# is a reasoning model, and reasoning is billed against this same ceiling: at 400
-# it spent 441 tokens thinking, hit the cap mid-thought, and returned an empty
-# string -- a critique that silently never appeared, intermittently, depending on
-# how hard the model felt like thinking. The visible critique is still short; the
-# headroom is for the part of the budget the model spends before writing it.
-MAX_TOKENS = 1200
-
 # How much of the material being judged to include. The evaluator does not need
 # a whole long answer to tell whether it cites sources or dodges the question,
 # and this call is pure overhead on top of the reply the user actually wanted.
@@ -137,7 +129,8 @@ def _evaluate(system_prompt, user_content):
         return None, ''
     try:
         raw = _chat_model(
-            settings.OPENROUTER_EVALUATOR_MODEL, temperature=0.2, max_tokens=MAX_TOKENS,
+            settings.OPENROUTER_EVALUATOR_MODEL, temperature=0.2,
+            max_tokens=settings.CHAT_EVALUATOR_MAX_TOKENS,
         ).invoke([
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_content),
@@ -149,7 +142,8 @@ def _evaluate(system_prompt, user_content):
         # Almost always a reasoning model exhausting MAX_TOKENS before it starts
         # writing. Logged rather than swallowed: the symptom is a critique that
         # intermittently does not appear, which is invisible from the outside.
-        print(f'Evaluator returned nothing (raise MAX_TOKENS, currently {MAX_TOKENS})')
+        print('Evaluator returned nothing -- raise CHAT_EVALUATOR_MAX_TOKENS '
+              f'(currently {settings.CHAT_EVALUATOR_MAX_TOKENS})')
         return None, ''
     return parse_critique(raw)
 
