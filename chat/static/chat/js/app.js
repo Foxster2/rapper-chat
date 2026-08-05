@@ -145,18 +145,179 @@ function escapeHtml(str) {
     return div.innerHTML;
 }
 
+/* ══ LIVE MARKDOWN STREAMING ═════════════════════════════════
+   The reply is re-parsed from scratch on every frame rather than appended to.
+   Markdown cannot be rendered incrementally in any honest way: "| a | b |" is a
+   paragraph until the delimiter row arrives and turns the whole thing into a
+   table, and "**bold" is literal text until its closing pair lands. Only a full
+   re-parse of everything received so far can revise a decision it already made,
+   which is what makes elements snap into place as they complete.
+
+   The accumulated markdown is the state; the DOM is a projection of it. */
+
+/* Per-element stream state, keyed weakly so a bubble replaced by the `done`
+   swap takes its buffer with it instead of leaking. */
+const STREAM_STATE = new WeakMap();
+
+function streamState(el) {
+    let s = STREAM_STATE.get(el);
+    if (!s) {
+        s = { raw: '', html: '', pending: false, frozen: false };
+        STREAM_STATE.set(el, s);
+    }
+    return s;
+}
+
+/* gfm for tables and fenced code; breaks stays off because python-markdown
+   treats a single newline as a space too, and the two renderers disagreeing
+   would show up as a reflow at the final swap. */
+const MARKED_OPTIONS = { gfm: true, breaks: false };
+
+/* Mirrors chat/utils.py: every link opens in a new tab, and rel is set with it
+   so the opened page cannot reach back through window.opener. */
+let purifyHooked = false;
+function ensurePurifyHook() {
+    if (purifyHooked) return;
+    purifyHooked = true;
+    DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+        if (node.tagName === 'A' && node.hasAttribute('href')) {
+            node.setAttribute('target', '_blank');
+            node.setAttribute('rel', 'noopener noreferrer');
+        }
+    });
+}
+
+/* The server's _wrap_sources, repeated here so the sources block is already set
+   apart while it streams -- otherwise it would be styled only at the final swap,
+   which is the exact reflow this whole change exists to remove. Applied after
+   sanitizing, as on the server: the div is ours, its contents are not. */
+const SOURCES_HEADING = /<h[23]>\s*Sources\s*<\/h[23]>/gi;
+
+function wrapSources(html) {
+    let last = -1, match;
+    SOURCES_HEADING.lastIndex = 0;
+    while ((match = SOURCES_HEADING.exec(html)) !== null) last = match.index;
+    if (last < 0) return html;
+    return `${html.slice(0, last)}<div class="sources">${html.slice(last)}</div>`;
+}
+
+function renderMarkdownPreview(raw) {
+    ensurePurifyHook();
+    return wrapSources(DOMPurify.sanitize(marked.parse(raw, MARKED_OPTIONS)));
+}
+
+/* Replace only the blocks that actually changed.
+   A reply is append-mostly: re-parsing produces byte-identical HTML for every
+   block above the one still being written, so the first mismatch is the only
+   place the DOM needs touching. Rewriting the whole subtree each frame instead
+   would drop a text selection the user is holding, restart image loads, and
+   repaint finished paragraphs sixty times a second. */
+function patchChildren(target, html) {
+    const next = document.createElement('div');
+    next.innerHTML = html;
+    const oldKids = target.children, newKids = next.children;
+
+    let i = 0;
+    while (i < oldKids.length && i < newKids.length
+           && oldKids[i].outerHTML === newKids[i].outerHTML) i++;
+
+    /* Both are live collections: removing or moving element i shifts the rest
+       down into it, so the index stays put while the length falls or rises. */
+    while (oldKids.length > i) target.removeChild(oldKids[i]);
+    while (newKids.length > i) target.appendChild(newKids[i]);
+}
+
+/* Follow the reply only when the reader is already at the bottom. Scrolling up
+   to re-read something mid-reply is normal, and yanking them back every frame
+   would make that impossible. */
+const SCROLL_STICK_SLACK = 120;
+
+function isNearBottom(c) {
+    return c.scrollHeight - c.scrollTop - c.clientHeight < SCROLL_STICK_SLACK;
+}
+
+function renderStream(el) {
+    const s = streamState(el);
+    let html;
+    try {
+        html = renderMarkdownPreview(s.raw);
+    } catch (err) {
+        /* A parser fault must not cost the reply: the text is still accumulating
+           and the server's own render lands at `done` regardless. */
+        console.error('markdown preview failed', err);
+        return;
+    }
+    if (html === s.html) return;
+    s.html = html;
+
+    const container = document.getElementById('messages-container');
+    const stick = container ? isNearBottom(container) : false;
+    patchChildren(el, html);
+    if (stick && container) container.scrollTop = container.scrollHeight;
+}
+
+/* One render per frame however many tokens land in it. Tokens arrive faster than
+   the screen refreshes, so parsing per token would be work nobody can see;
+   requestAnimationFrame also stops the parsing entirely in a background tab.
+
+   The flag is raised before scheduling, not from the returned handle, so it does
+   not depend on the callback running later than this line. */
+function scheduleRender(el) {
+    const s = streamState(el);
+    if (s.pending) return;
+    s.pending = true;
+    requestAnimationFrame(() => {
+        s.pending = false;
+        renderStream(el);
+    });
+}
+
+/* The SSE extension hands over the raw event; the shape of the detail has moved
+   between versions, so read it defensively rather than pin to one. */
+function sseEventData(e) {
+    const d = e.detail;
+    if (typeof d?.data === 'string') return d.data;
+    if (typeof d?.event?.data === 'string') return d.event.data;
+    return '';
+}
+
+document.body.addEventListener('htmx:sseBeforeMessage', (e) => {
+    if (e.detail?.type !== 'token') return;
+    const el = e.target?.classList?.contains('stream-markdown')
+        ? e.target
+        : e.target?.querySelector?.('.stream-markdown');
+    if (!el) return;
+
+    /* Cancel unconditionally, before anything else can fail. htmx would swap
+       this data as HTML, and it is model output -- an <img onerror=...> in a
+       reply would run. The markdown parser and DOMPurify below are what make it
+       safe to put on the page. */
+    e.preventDefault();
+
+    const s = streamState(el);
+    if (s.frozen) return;
+
+    s.raw += sseEventData(e);
+    el.classList.add('is-streaming');
+    el.parentElement?.querySelector('.thinking')?.remove();
+    scheduleRender(el);
+});
+
 /* Freeze the reply that is currently streaming, without closing the connection.
-   Replacing the token target with a copy of itself leaves the SSE extension
-   appending into a node that is no longer in the document, so text stops growing
-   on screen while the request stays open -- which matters, because the server
-   only saves the partial reply after its stream ends. The `done` event still
-   targets the bubble itself and replaces this frozen text with the rendered
-   markdown when it arrives. */
+   The request has to stay open, because the server only saves the partial reply
+   once its own stream ends -- so tokens keep arriving and are still accumulated;
+   they just stop being drawn. The `done` event then replaces the bubble with the
+   server's render of everything that was actually generated. */
 function freezeStreamingReply() {
-    const live = document.querySelector('#messages-container .stream-tokens');
-    if (live) live.replaceWith(live.cloneNode(true));
-    document.querySelector('#messages-container .stream-cursor')?.remove();
+    const el = document.querySelector('#messages-container .stream-markdown');
+    if (el) {
+        streamState(el).frozen = true;
+        el.classList.remove('is-streaming');
+    }
     document.querySelector('#messages-container .thinking')?.remove();
+    /* A stop during a search would otherwise freeze with "Searching the web..."
+       as the last thing on screen, which reads as still running. */
+    document.querySelector('#messages-container .stream-status')?.remove();
 }
 
 /* Active conversation gets the theme's secondary-color highlight */
@@ -244,13 +405,24 @@ document.addEventListener('keydown', (e) => {
 /* Autoscroll + re-highlight after htmx swaps and SSE token events */
 document.body.addEventListener('htmx:afterSwap', (e) => {
     if (e.target && e.target.id === 'conversations-list') highlightActive();
-    /* First streamed token arrived → drop the "thinking" dots for that bubble */
-    if (e.target && e.target.classList && e.target.classList.contains('stream-tokens')) {
+    /* A tool started: the status line carries its own spinner and its own label,
+       so the generic thinking dots would just be a second animation saying less.
+       (The token path drops them itself -- it never reaches a swap.) */
+    if (e.target && e.target.classList && e.target.classList.contains('stream-status')
+        && e.target.innerHTML.trim()) {
         e.target.parentElement.querySelector('.thinking')?.remove();
     }
     scrollMessages();
 });
-document.body.addEventListener('htmx:sseMessage', scrollMessages);
+
+/* Status and `done` only -- token events are cancelled before they get here.
+   Stick-aware for the same reason the token render is: the final swap lands on
+   content the preview already drew, so it must not jerk a reader who has
+   scrolled up to look at something earlier in the reply. */
+document.body.addEventListener('htmx:sseMessage', () => {
+    const c = document.getElementById('messages-container');
+    if (c && isNearBottom(c)) c.scrollTop = c.scrollHeight;
+});
 
 /* The __session cookie is a ~60s JWT that clerk-js refreshes on its own timer.
    A request can land right on that boundary and get a 401 before the refresh

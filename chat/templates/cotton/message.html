@@ -1,6 +1,8 @@
 <c-vars message />
 {% comment %}One stored message. Assistant content is pre-rendered markdown HTML.{% endcomment %}
-{% if message.role == 'user' %}
+{% if message.role == 'evaluator' %}
+<c-evaluator-bubble :message="message" />
+{% elif message.role == 'user' %}
 <div class="chat chat-end max-w-4xl mx-auto w-full px-4">
     <div class="chat-bubble chat-bubble-primary">{{ message.content }}</div>
 </div>

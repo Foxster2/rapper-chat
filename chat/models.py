@@ -23,6 +23,19 @@ class Message(models.Model):
     ROLE_CHOICES = (
         ('user', 'User'),
         ('assistant', 'Assistant'),
+        # A critique written by the evaluator model, not part of the dialogue.
+        # Stored as a message so it keeps its place in the transcript and is
+        # replayed on reload, but it is never sent to the assistant as a turn --
+        # see chat.llm.build_history, which folds it in as guidance instead.
+        ('evaluator', 'Evaluator'),
+    )
+    # Which side of the exchange an evaluator message is about. Blank for user
+    # and assistant rows. Kept as its own field rather than inferred from
+    # position, because position stops being reliable the moment a stream is
+    # interrupted partway through a turn.
+    CRITIQUE_CHOICES = (
+        ('prompt', 'Prompt'),
+        ('response', 'Response'),
     )
     conversation = models.ForeignKey(
         Conversation,
@@ -32,6 +45,11 @@ class Message(models.Model):
     role = models.CharField(max_length=10, choices=ROLE_CHOICES)
     content = models.TextField()
     content_html = models.TextField(blank=True, default='')
+    critique_of = models.CharField(max_length=8, choices=CRITIQUE_CHOICES, blank=True, default='')
+    # Out of ten. Nullable rather than defaulted to zero: the evaluator can fail
+    # to produce a parseable score, and "no score" has to stay distinguishable
+    # from "scored zero", which is a real verdict.
+    score = models.PositiveSmallIntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

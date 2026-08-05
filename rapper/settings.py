@@ -161,6 +161,31 @@ OPENROUTER_MODEL = os.getenv('OPENROUTER_MODEL', 'meta-llama/llama-3.3-70b-instr
 # and an empty string would otherwise be taken as a real model name.
 OPENROUTER_TITLE_MODEL = os.getenv('OPENROUTER_TITLE_MODEL') or 'inclusionai/ling-3.0-flash:free'
 
+# The evaluator: a second model that scores the user's prompt and the assistant's
+# answer, and whose critiques are fed back into later turns (see chat/evaluator.py).
+# It costs two extra model calls per message, so it is a switch rather than a
+# constant -- turning it off restores the plain one-call-per-message behaviour.
+CHAT_EVALUATOR_ENABLED = os.getenv('CHAT_EVALUATOR_ENABLED', 'true').lower() not in (
+    '0', 'false', 'no', 'off')
+# Critiques are short and highly structured, so this follows the title model in
+# preferring a small fast non-reasoning model over the one answering the user.
+OPENROUTER_EVALUATOR_MODEL = (
+    os.getenv('OPENROUTER_EVALUATOR_MODEL') or 'inclusionai/ling-3.0-flash:free')
+
+# How much of a conversation is replayed to the model on each turn. The whole
+# history is re-sent every time, so left unbounded a conversation's input cost
+# grows with the square of its length; this caps it. Counted in tokens rather
+# than messages because a searched answer runs several times the length of a
+# plain one, so a message count would be a budget that swings with what the user
+# happened to ask. Tunable without a deploy: too low and follow-up questions
+# stop finding what they refer to, too high and long chats get expensive.
+CHAT_HISTORY_TOKEN_BUDGET = int(os.getenv('CHAT_HISTORY_TOKEN_BUDGET') or 4000)
+
+# Tavily web search, exposed to the assistant as a tool (see chat/tools.py).
+# Left blank rather than required: without it the tool reports itself unavailable
+# and the assistant answers from what it knows, so the app still runs.
+TAVILY_API_KEY = os.getenv('TAVILY_API', '')
+
 # Polar.sh billing
 POLAR_ACCESS_TOKEN = os.getenv('POLAR_ACCESS_TOKEN')
 POLAR_WEBHOOK_SECRET = os.getenv('POLAR_WEBHOOK_SECRET')

@@ -1,4 +1,5 @@
 import time
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlsplit
 
 from django.shortcuts import render, redirect
@@ -8,15 +9,19 @@ from django.http import (
 )
 from django.conf import settings
 from django.urls import reverse
+from django.utils.html import escape
 from django.utils.http import url_has_allowed_host_and_scheme, urlencode
 from django.views.decorators.csrf import csrf_exempt
 from django_cotton import render_component
 from django_htmx.http import trigger_client_event
+from langchain_core.messages import AIMessageChunk
+from langgraph.errors import GraphRecursionError
 from polar_sdk.webhooks import WebhookVerificationError, WebhookUnknownTypeError
 
 from . import billing
+from . import evaluator
 from .models import Conversation, Message
-from .llm import build_chain, build_history, generate_title
+from .llm import build_agent, build_history, generate_title, RECURSION_LIMIT
 from .utils import render_markdown, sse_frame
 
 # How often the streaming generator checks whether the user asked it to stop.
@@ -31,6 +36,64 @@ STOP_POLL_INTERVAL = 0.1  # seconds
 # pane load. A stop always captures at least one token, since the stop check
 # only runs after a token has been yielded, so it does not normally land here.
 STOPPED_EMPTY_HTML = '<p class="italic text-base-content/50">Response stopped.</p>'
+
+# Placeholder shown while a tool runs. The model emits no prose while it decides
+# to call one, and the search itself takes seconds, so without this the bubble
+# sits empty and the reply looks hung.
+SEARCHING_HTML = (
+    '<span class="loading loading-dots loading-sm align-middle text-accent"></span>'
+    '<span class="ml-2 text-sm opacity-70">{label}</span>'
+)
+# Model-written, so it is escaped before it lands in the status line, and capped
+# so a runaway query can't push the reply off screen.
+MAX_STATUS_QUERY_CHARS = 80
+
+# How much of the conversation the prompt evaluator is shown. It has to judge
+# whether a short follow-up is clear *in context*, which needs the thread, but
+# not all of it -- the turns immediately before it are what make "what about the
+# second one?" answerable or not.
+EVAL_CONTEXT_TURNS = 4
+# Long enough to carry the substance of the previous answer, not just its
+# opening. Judging "summarize this" needs to see what there was to summarize;
+# at a few hundred characters the critic sees a fragment and reports the rest as
+# invented.
+EVAL_CONTEXT_CHARS = 900
+
+
+def _recent_transcript(conversation, exclude_pk):
+    """A plain-text tail of the conversation for the prompt evaluator. Excludes
+    critiques: the evaluator judging its own past output would drift."""
+    turns = [m for m in conversation.messages.all()
+             if m.role in ('user', 'assistant') and m.pk != exclude_pk]
+    lines = []
+    for m in turns[-EVAL_CONTEXT_TURNS:]:
+        body = ' '.join(m.content.split())[:EVAL_CONTEXT_CHARS]
+        lines.append(f"{'User' if m.role == 'user' else 'Assistant'}: {body}")
+    return '\n'.join(lines)
+
+
+# Ceiling on waiting for a critique that has not come back by the time the answer
+# has. Past this the reply ships without it: the critique is commentary, and
+# holding a finished answer hostage to it would be the wrong trade.
+EVAL_WAIT_SECONDS = 20
+
+
+def _persist_critique(request, conversation, kind, score, text):
+    """Store one critique and return the bubble HTML, or '' if there was none.
+
+    Returns the rendered component rather than the row because the caller's only
+    use for it is an SSE frame, and rendering here keeps the two representations
+    of a critique -- stored and streamed -- coming from the same template.
+    """
+    # A score with no prose is still a verdict worth showing -- the bubble
+    # renders the badge on its own. Only a critique with neither is nothing.
+    if not (text or '').strip() and score is None:
+        return ''
+    message = Message.objects.create(
+        conversation=conversation, role='evaluator', critique_of=kind,
+        score=score, content=text, content_html=render_markdown(text),
+    )
+    return render_component(request, 'evaluator-bubble', message=message, entering=True)
 
 
 def _same_origin_path(url, request):
@@ -179,7 +242,10 @@ def _pane_response(request, conversation, refresh_list=False):
     the client which conversation is now active via a conversation-active client
     event. Optionally piggybacks an out-of-band refresh of the sidebar list (used
     when a new chat is created)."""
-    last = conversation.messages.last()
+    # Excludes critiques: they are written around a turn, not as one, so a
+    # conversation whose last row is a critique is still answered (or still
+    # waiting) according to the turn before it.
+    last = conversation.messages.exclude(role='evaluator').last()
     conversations = _user_conversations(request) if refresh_list else None
     active_id = conversation.id if refresh_list else None
     response = HttpResponse(render_component(request, 'chat-pane',
@@ -260,6 +326,54 @@ def create_message(request, conversation_id):
     ))
 
 
+def _chunk_text(chunk):
+    """The plain text carried by an AI message chunk.
+
+    `.content` is a string for most providers but a list of typed blocks for
+    some, so take only the text blocks -- anything else (reasoning traces, tool
+    call fragments) is machine detail that must not reach the bubble.
+    """
+    content = chunk.content
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        # A list element is either a typed block or, per the message schema, a
+        # bare string -- which is already the text and would otherwise be dropped.
+        return ''.join(
+            block if isinstance(block, str)
+            else block.get('text', '') if block.get('type') == 'text'
+            else ''
+            for block in content
+        )
+    return ''
+
+
+def _status_frames(payload):
+    """SSE `status` frames for one LangGraph node update.
+
+    Names the search when the model asks for a tool, then switches to reading
+    once the results are back. Neither frame clears the line: the model stays
+    silent for several seconds after a search while it reads, and a line cleared
+    at the tool boundary would leave that gap blank, which reads as a hang. The
+    caller clears it on the first token of the answer instead.
+    """
+    for node, update in (payload or {}).items():
+        for msg in (update or {}).get('messages') or []:
+            calls = getattr(msg, 'tool_calls', None)
+            if calls:
+                raw = (calls[0].get('args') or {}).get('query') or ''
+                query = ' '.join(raw.split())[:MAX_STATUS_QUERY_CHARS]
+                label = (f'Searching the web for &ldquo;{escape(query)}&rdquo;&hellip;'
+                         if query else 'Searching the web&hellip;')
+                yield sse_frame('status', SEARCHING_HTML.format(label=label))
+            elif node == 'tools':
+                # A second label rather than a second spinner: the wait spans two
+                # phases, and a caption that changes is what distinguishes work
+                # in progress from a stalled request.
+                yield sse_frame(
+                    'status', SEARCHING_HTML.format(label='Reading the results&hellip;'))
+
+
 @require_clerk_auth
 def stream_reply(request, conversation_id):
     """Stream the assistant's reply to the latest user message token-by-token via SSE.
@@ -273,8 +387,10 @@ def stream_reply(request, conversation_id):
         return JsonResponse({'error': 'Conversation not found'}, status=404)
 
     # Guard against EventSource auto-reconnect regenerating a reply: only stream when
-    # the most recent message is a user turn still awaiting an answer.
-    last = conversation.messages.last()
+    # the most recent message is a user turn still awaiting an answer. Critiques
+    # are excluded -- the prompt critique is written mid-stream, so counting it
+    # would make a reconnect think the turn had already been answered.
+    last = conversation.messages.exclude(role='evaluator').last()
     if last is None or last.role != 'user':
         return StreamingHttpResponse(sse_frame('done', ''), content_type='text/event-stream')
 
@@ -287,32 +403,130 @@ def stream_reply(request, conversation_id):
     # generator is first iterated, so it can't race a genuine stop.
     Conversation.objects.filter(pk=conversation.pk).update(stop_requested=False)
 
+    question = last.content
+    transcript = _recent_transcript(conversation, exclude_pk=last.pk)
+
     def event_stream():
         collected = []
+        # Whether a status line is currently on screen, so it is cleared exactly
+        # once -- when the answer starts, when the run ends without one, or on
+        # the error paths below.
+        status_active = False
+        prompt_eval_sent = False
+
+        # Started before the agent and read while it streams, so the critique of
+        # the question is written *alongside* the answer rather than in front of
+        # it. Sequencing them would add its whole latency to the wait for the
+        # first token, which is the one number in this endpoint worth guarding.
+        pool = ThreadPoolExecutor(max_workers=1) if evaluator.is_enabled() else None
+        prompt_future = (pool.submit(evaluator.evaluate_prompt, question, transcript)
+                         if pool else None)
+
+        def prompt_eval_frame(block=False):
+            """The prompt critique's SSE frame once available, else None. Emits at
+            most once; `block` waits for a critique still in flight."""
+            nonlocal prompt_eval_sent
+            if prompt_eval_sent or prompt_future is None:
+                return None
+            if not block and not prompt_future.done():
+                return None
+            prompt_eval_sent = True
+            try:
+                score, text = prompt_future.result(timeout=EVAL_WAIT_SECONDS)
+            except Exception as e:
+                print(f'Prompt evaluation failed: {e}')
+                return None
+            html = _persist_critique(request, conversation, 'prompt', score, text)
+            return sse_frame('prompt_eval', html) if html else None
+
         try:
             next_stop_check = time.monotonic() + STOP_POLL_INTERVAL
-            for chunk in build_chain().stream({"history": history}):
-                if not chunk:
-                    continue
-                collected.append(chunk)
-                yield sse_frame('token', chunk)
+            # "messages" carries the tokens; "updates" carries the node
+            # transitions, which are the only signal that a tool is running --
+            # the model produces no text while it decides to call one.
+            stream = build_agent().stream(
+                {'messages': history},
+                stream_mode=['messages', 'updates'],
+                config={'recursion_limit': RECURSION_LIMIT},
+            )
+            for mode, payload in stream:
+                if mode == 'updates':
+                    for frame in _status_frames(payload):
+                        status_active = True
+                        yield frame
+                else:
+                    chunk, _meta = payload
+                    # Tool results arrive on this stream too. They are input for
+                    # the model's next turn, not part of the reply, so only the
+                    # model's own chunks are forwarded.
+                    if isinstance(chunk, AIMessageChunk):
+                        text = _chunk_text(chunk)
+                        if text:
+                            if status_active:
+                                # The answer itself is the first thing worth
+                                # showing in place of the status, so the line
+                                # survives the whole tool call and the model's
+                                # silence after it, and goes exactly here.
+                                status_active = False
+                                yield sse_frame('status', '')
+                            collected.append(text)
+                            yield sse_frame('token', text)
 
-                # Time-based rather than per-token: tokens arrive far faster than
+                # Time-based rather than per-event: tokens arrive far faster than
                 # a person can click, so polling every token would spend a query
-                # per token for no extra responsiveness.
+                # per token for no extra responsiveness. Checked on every event,
+                # not just tokens, so a stop still lands during a search -- though
+                # an HTTP call already in flight runs to completion first.
                 now = time.monotonic()
                 if now >= next_stop_check:
                     next_stop_check = now + STOP_POLL_INTERVAL
+                    # Checked on the same tick as the stop flag rather than per
+                    # token: the critique lands whenever it lands, and a tenth of
+                    # a second either way is not perceptible.
+                    frame = prompt_eval_frame()
+                    if frame:
+                        yield frame
                     if Conversation.objects.filter(pk=conversation.pk, stop_requested=True).exists():
                         break
+
+            # Stopped mid-search, or the run ended having only ever called tools:
+            # either way no token arrived to take the line down, and leaving a
+            # spinner above a finished reply would read as still running.
+            if status_active:
+                yield sse_frame('status', '')
+        except GraphRecursionError:
+            # The model kept calling tools instead of answering and hit the cap.
+            # Whatever it had already said is kept, so this falls through to the
+            # normal persist path rather than being treated as a failure.
+            print(f'Agent hit the {RECURSION_LIMIT}-step limit without answering')
+            yield sse_frame('status', '')
+            collected.append(
+                '\n\n*I kept searching without reaching an answer — '
+                'try narrowing the question.*'
+            )
         except Exception as e:
             print(f"LangChain/OpenRouter streaming error: {e}")
+            yield sse_frame('status', '')
+            # The question was still worth critiquing even though answering it
+            # failed, and the slot for it is already on the page.
+            frame = prompt_eval_frame(block=True)
+            if frame:
+                yield frame
             yield sse_frame('error', str(e))
             # Always close with `done` too: the bubble's sse-close="done" is what stops
             # EventSource from auto-reconnecting and re-hitting the API in a loop.
             # The payload replaces the bubble, so surface the failure there.
             yield sse_frame('done', '<p class="text-error">Sorry — the reply failed to generate. Please try again.</p>')
             return
+        finally:
+            if pool:
+                pool.shutdown(wait=False)
+
+        # Ordered before the answer is persisted so the critique of the question
+        # keeps its place in the transcript ahead of the reply it prompted.
+        frame = prompt_eval_frame(block=True)
+        if frame:
+            yield frame
 
         # A stopped reply takes this same path deliberately: it is persisted and
         # rendered exactly like a complete one, so it survives a reload and reads
@@ -322,6 +536,25 @@ def stream_reply(request, conversation_id):
         Message.objects.create(conversation=conversation, role='assistant', content=full, content_html=full_html)
         conversation.stop_requested = False
         conversation.save(update_fields=['stop_requested', 'updated_at'])
+
+        # Before `done`, not after: `done` is the event named in sse-close, so it
+        # tears the connection down and anything sent behind it is never
+        # delivered. The reader loses nothing by the ordering -- the answer is
+        # already fully drawn by the live render, and `done` only swaps in the
+        # server's copy of the same thing.
+        #
+        # Skipped for an empty or stopped reply, where a critique would be
+        # scoring the user's interruption rather than the model's work.
+        if full.strip() and evaluator.is_enabled():
+            try:
+                score, text = evaluator.evaluate_response(question, full, transcript)
+            except Exception as e:
+                print(f'Response evaluation failed: {e}')
+            else:
+                html = _persist_critique(request, conversation, 'response', score, text)
+                if html:
+                    yield sse_frame('response_eval', html)
+
         yield sse_frame('done', full_html)
 
     response = StreamingHttpResponse(event_stream(), content_type='text/event-stream')

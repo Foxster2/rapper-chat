@@ -47,14 +47,68 @@ body { font-family: 'Inter', system-ui, sans-serif; }
         oklch(var(--b1) / 0) 100%);
 }
 
-/* Raw tokens land here before the final markdown render — keep their line
-   breaks instead of collapsing the reply into one blob of text */
-.stream-tokens { white-space: pre-wrap; }
+/* The reply as it streams: markdown re-rendered every frame by app.js, so this
+   holds real elements (h2, ul, pre, ...) from the first token and inherits the
+   .assistant-content rules below. Empty until the first token, and collapsed
+   while empty so it reserves no space behind the thinking dots. */
+.stream-markdown:empty { display: none; }
 
-/* Streaming cursor shown while tokens arrive (hidden while the thinking dots show) */
-.stream-cursor { display: inline-block; width: 0.5ch; animation: blink 1s step-start infinite; }
+/* Streaming cursor, drawn on whatever block is currently last rather than as an
+   element of its own -- a sibling span would sit on its own line under a block
+   element, and a real node in the tree would show up as a diff on every frame
+   and defeat the patching in app.js. */
+.stream-markdown.is-streaming > :last-child::after {
+    content: '▍';
+    display: inline-block;
+    margin-left: 0.05em;
+    color: oklch(var(--a));
+    animation: blink 1s step-start infinite;
+}
 @keyframes blink { 50% { opacity: 0; } }
-.assistant-content:has(.thinking) .stream-cursor { display: none; }
+
+/* Tool progress ("Searching the web for ...") shown in place of the thinking dots
+   while a search runs. Empty between tools and once the answer starts, so the
+   :not(:empty) guard is what keeps it from reserving a blank line the rest of
+   the time -- and from leaving the cursor blinking beside it mid-search. */
+.stream-status:not(:empty) { display: block; margin-bottom: 0.5rem; }
+.assistant-content:has(.stream-status:not(:empty)) .stream-markdown.is-streaming > :last-child::after { content: none; }
+
+/* ── Evaluator ────────────────────────────────────────────────
+   A third voice in the transcript, so it has to be unmistakable at a glance
+   without competing with the answer for attention. Warning-toned (neither the
+   user's primary nor the assistant's accent), inset from both, and set a size
+   down: it is a margin note on the exchange, not a turn in it. */
+.eval-slot:empty { display: none; }
+
+.evaluator-turn .chat-bubble {
+    background: oklch(var(--wa, 82% 0.16 86) / 0.10);
+    border: 1px solid oklch(var(--wa, 82% 0.16 86) / 0.35);
+    border-left-width: 3px;
+    color: inherit;
+    font-size: 0.92em;
+}
+/* Narrower than the answer so the two never read as the same column of text. */
+.evaluator-turn { padding-right: 4rem; }
+@media (max-width: 640px) { .evaluator-turn { padding-right: 1rem; } }
+
+/* daisyUI draws a little tail on every chat bubble; on a commentary block it
+   reads as another speaker interrupting, which is the opposite of the point. */
+.evaluator-turn .chat-bubble:before { display: none; }
+
+.evaluator-score {
+    display: flex; align-items: center; gap: 0.5rem;
+    margin-bottom: 0.5rem; padding-bottom: 0.4rem;
+    border-bottom: 1px solid oklch(var(--bc) / 0.12);
+}
+.evaluator-score-value { font-weight: 600; font-size: 1.05em; white-space: nowrap; }
+.evaluator-score-bar {
+    flex: 1; max-width: 7rem; height: 0.3rem; border-radius: 999px;
+    background: oklch(var(--bc) / 0.15); overflow: hidden;
+}
+.evaluator-score-bar > span {
+    display: block; height: 100%; border-radius: 999px;
+    background: oklch(var(--wa, 82% 0.16 86));
+}
 
 /* Message entrance: fade + slide up. Deliberately scoped to .chat-enter rather
    than every .chat -- a loaded conversation would otherwise replay this on all
@@ -88,7 +142,29 @@ body { font-family: 'Inter', system-ui, sans-serif; }
 .assistant-content ul { list-style: disc; margin: 0.5em 0 0.5em 1.25em; }
 .assistant-content ol { list-style: decimal; margin: 0.5em 0 0.5em 1.25em; }
 .assistant-content li { margin: 0.2em 0; }
-.assistant-content a { text-decoration: underline; }
+/* Links in a reply are nearly always citations, since the model is asked to link
+   every source it used. A step down in size and an italic face keep a run of
+   them reading as apparatus rather than as part of the sentence, and the accent
+   colour is what marks them clickable once the size stops carrying that weight. */
+.assistant-content a {
+    text-decoration: underline;
+    text-underline-offset: 0.15em;
+    font-size: 0.9em;
+    font-style: italic;
+    color: oklch(var(--a));
+}
+.assistant-content a:hover { text-decoration-thickness: 2px; }
+
+/* The trailing "Sources" list the model is asked to add, wrapped server-side by
+   render_markdown. Set apart with a rule and dimmed: it is a reference list, not
+   the answer, and someone scanning the reply should be able to stop at it. */
+.assistant-content .sources { margin-top: 1.2em; padding-top: 0.6em;
+    border-top: 1px solid oklch(var(--bc) / 0.15); }
+.assistant-content .sources :where(h2, h3) { font-size: 0.95em; opacity: 0.7;
+    text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 0.3em; }
+.assistant-content .sources ul,
+.assistant-content .sources ol { list-style: none; margin-left: 0; }
+.assistant-content .sources li { margin: 0.1em 0; }
 .assistant-content code { font-family: 'IBM Plex Mono', monospace; font-size: 0.85em; background: hsl(0 0% 50% / 0.18); padding: 0.1em 0.35em; border-radius: 0.25rem; }
 .assistant-content pre { background: hsl(0 0% 50% / 0.14); padding: 0.8em 1em; border-radius: 0.5rem; overflow-x: auto; margin: 0.6em 0; }
 .assistant-content pre code { background: none; padding: 0; }

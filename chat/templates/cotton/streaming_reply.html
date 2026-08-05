@@ -1,17 +1,40 @@
 <c-vars conversation />
 {% comment %}
-Assistant bubble that streams via SSE. htmx opens an EventSource to stream_reply;
-`token` events append text into .stream-tokens, and the final `done` event replaces
-the whole content with server-rendered markdown HTML and closes the connection.
+The whole in-flight turn: the evaluator's critique of the prompt, the streaming
+answer, and the evaluator's critique of that answer. All three share one SSE
+connection, so their order on screen is fixed by the markup rather than by which
+of the three models happens to finish first.
+
+`token` events are NOT swapped by htmx. hx-swap="none" leaves the data alone and
+app.js cancels the swap outright, accumulates the raw markdown, and re-renders it
+into .stream-markdown on each animation frame -- so headings, lists and code
+blocks format as they arrive instead of appearing as literal syntax until the end.
+Two reasons it is not left to htmx: a swap inserts the data as HTML, and this data
+is model output; and appending text can only ever append text, never re-format
+what came before it.
+
+The final `done` event replaces the bubble with the server-rendered HTML. That is
+the copy that gets stored and re-served on reload, so the client-side render only
+ever has to be a good preview -- the server has the last word, and any difference
+between the two parsers resolves at that swap. It is also the event named in
+sse-close, so nothing may be sent after it.
 {% endcomment %}
-<div class="chat chat-enter chat-start max-w-4xl mx-auto w-full px-4" hx-ext="sse"
-     sse-connect="/api/conversations/{{ conversation.id }}/stream/" sse-close="done">
-    <div class="chat-image">
-        <div class="w-8 h-8 rounded-full bg-accent/20 text-accent flex items-center justify-center">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+<div hx-ext="sse" sse-connect="/api/conversations/{{ conversation.id }}/stream/" sse-close="done">
+    {% comment %}Empty until a critique lands, and collapsed while empty.{% endcomment %}
+    <div class="eval-slot" sse-swap="prompt_eval" hx-swap="innerHTML"></div>
+
+    <div class="chat chat-enter chat-start max-w-4xl mx-auto w-full px-4">
+        <div class="chat-image">
+            <div class="w-8 h-8 rounded-full bg-accent/20 text-accent flex items-center justify-center">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+            </div>
+        </div>
+        <div class="chat-bubble assistant-content" sse-swap="done" hx-swap="innerHTML">
+            <span class="thinking loading loading-dots loading-sm align-middle text-accent"></span>
+            <span class="stream-status" sse-swap="status" hx-swap="innerHTML"></span>
+            <div class="stream-markdown" sse-swap="token" hx-swap="none"></div>
         </div>
     </div>
-    <div class="chat-bubble assistant-content" sse-swap="done" hx-swap="innerHTML">
-        <span class="thinking loading loading-dots loading-sm align-middle text-accent"></span><span class="stream-tokens" sse-swap="token" hx-swap="beforeend"></span><span class="stream-cursor text-accent">▍</span>
-    </div>
+
+    <div class="eval-slot" sse-swap="response_eval" hx-swap="innerHTML"></div>
 </div>

@@ -20,6 +20,15 @@
     <script src="https://unpkg.com/htmx-ext-sse@2.2.2/sse.js"></script>
     <script defer src="https://unpkg.com/alpinejs@3.14.8/dist/cdn.min.js"></script>
 
+    <!-- Markdown rendering for the reply as it streams. The server still renders
+         and sanitizes the copy that gets stored, so these only ever produce the
+         live preview; DOMPurify is what makes that preview safe, since the text
+         being parsed comes from the model. Not deferred: app.js registers the
+         handler that uses them, and a token can arrive before a deferred script
+         would have run. -->
+    <script src="https://cdn.jsdelivr.net/npm/marked@15.0.7/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.4/dist/purify.min.js"></script>
+
     <link rel="stylesheet" href="{% static 'chat/css/app.css' %}">
 </head>
 <body class="bg-base-100 text-base-content overflow-hidden h-screen">

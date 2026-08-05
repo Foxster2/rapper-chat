@@ -1,0 +1,35 @@
+<c-vars message entering=False />
+{% comment %}
+One evaluator critique. Rendered from the same template whether it arrives over
+SSE mid-turn or is replayed from storage on reload, so the two can't drift.
+
+Deliberately indented and narrower than the conversation it sits inside: it is
+commentary on the exchange rather than part of it, and reading it as a third
+speaker would be wrong.
+{% endcomment %}
+<div class="chat chat-start evaluator-turn max-w-4xl mx-auto w-full px-4{% if entering %} chat-enter{% endif %}">
+    <div class="chat-image">
+        <div class="w-8 h-8 rounded-full bg-warning/20 text-warning flex items-center justify-center">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+            </svg>
+        </div>
+    </div>
+    <div class="chat-header text-xs opacity-60 mb-1">
+        Evaluator
+        <span class="opacity-70">&middot;
+            {% if message.critique_of == 'prompt' %}your prompt{% else %}the reply{% endif %}
+        </span>
+    </div>
+    <div class="chat-bubble evaluator-content assistant-content">
+        {% if message.score is not None %}
+        <div class="evaluator-score">
+            <span class="evaluator-score-value">{{ message.score }}<span class="opacity-50">/10</span></span>
+            <span class="evaluator-score-bar" aria-hidden="true">
+                <span style="width: {% widthratio message.score 10 100 %}%"></span>
+            </span>
+        </div>
+        {% endif %}
+        {{ message.content_html|safe }}
+    </div>
+</div>

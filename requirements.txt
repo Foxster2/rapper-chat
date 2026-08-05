@@ -2,6 +2,7 @@ django
 python-dotenv
 langchain
 langchain-openai
+langgraph
 pyjwt[crypto]
 requests
 markdown
