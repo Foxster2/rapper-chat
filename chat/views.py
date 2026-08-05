@@ -52,24 +52,39 @@ MAX_STATUS_QUERY_CHARS = 80
 # whether a short follow-up is clear *in context*, which needs the thread, but
 # not all of it -- the turns immediately before it are what make "what about the
 # second one?" answerable or not.
-EVAL_CONTEXT_TURNS = 4
-# Long enough to carry the substance of the previous answer, not just its
-# opening. Judging "summarize this" needs to see what there was to summarize;
-# at a few hundred characters the critic sees a fragment and reports the rest as
-# invented.
-EVAL_CONTEXT_CHARS = 900
+EVAL_CONTEXT_TURNS = 10
+# Per turn. Long enough to carry the substance of an answer rather than its
+# opening: judging "summarize this" means seeing what there was to summarize,
+# and at a few hundred characters the critic sees a fragment and reports the
+# rest as invented.
+EVAL_CONTEXT_CHARS = 2000
+# Ceiling on the whole transcript. Without it the two limits above multiply, and
+# the worst case -- ten long turns -- would put more context into each critique
+# than into the answer being critiqued, twice per message. Oldest turns are
+# dropped first, so the turns that a follow-up actually refers to survive.
+EVAL_CONTEXT_TOTAL_CHARS = 9000
 
 
 def _recent_transcript(conversation, exclude_pk):
-    """A plain-text tail of the conversation for the prompt evaluator. Excludes
-    critiques: the evaluator judging its own past output would drift."""
+    """A plain-text tail of the conversation for the evaluator.
+
+    Critiques are left out: the evaluator judging its own past output drifts,
+    each round agreeing harder with the last.
+    """
     turns = [m for m in conversation.messages.all()
              if m.role in ('user', 'assistant') and m.pk != exclude_pk]
-    lines = []
-    for m in turns[-EVAL_CONTEXT_TURNS:]:
+
+    lines, budget = [], EVAL_CONTEXT_TOTAL_CHARS
+    # Newest first so the total budget is spent on the turns nearest the message
+    # being judged, then flipped back into reading order.
+    for m in reversed(turns[-EVAL_CONTEXT_TURNS:]):
         body = ' '.join(m.content.split())[:EVAL_CONTEXT_CHARS]
-        lines.append(f"{'User' if m.role == 'user' else 'Assistant'}: {body}")
-    return '\n'.join(lines)
+        line = f"{'User' if m.role == 'user' else 'Assistant'}: {body}"
+        if len(line) > budget:
+            break
+        budget -= len(line)
+        lines.append(line)
+    return '\n'.join(reversed(lines))
 
 
 # Ceiling on waiting for a critique that has not come back by the time the answer
