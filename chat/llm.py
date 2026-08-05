@@ -20,7 +20,8 @@ SYSTEM_PROMPT = (
     # Aimed at padding rather than at length. Told only to "be brief", models
     # drop the qualification that made the answer correct; the last sentence is
     # what keeps that from happening.
-    "Answer at the length the question deserves and no further. A direct "
+    "Answer at the length the question deserves, letting the question set that "
+    "length rather than a habit of filling space. A direct "
     "question takes a direct answer, often a sentence or two. Skip preamble, do "
     "not restate the question, do not announce what you are about to do, and do "
     "not close by summarising what you just said. Leave out caveats and "
