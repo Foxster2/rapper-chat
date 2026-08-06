@@ -173,14 +173,22 @@ def _reject_if_over_quota(request):
 
 
 def _rendered_messages(conversation):
-    """Stored messages ready for templating — assistant turns pre-rendered to HTML."""
+    """Stored messages ready for templating — every markdown-bearing turn
+    pre-rendered to HTML.
+
+    That means critiques as well as replies. Only the user's own turns are shown
+    as plain text, so the test here is the role that is *not* rendered rather
+    than a list of the ones that are: an evaluator bubble replayed with no
+    content_html renders as an empty shell, which is exactly what a role
+    allowlist here caused once already.
+    """
     items = []
     for m in conversation.messages.all():
         html = ''
-        if m.role == 'assistant':
-            if not m.content_html:
+        if m.role != 'user':
+            if not m.content_html and m.content:
                 # Backfills rows saved before content_html existed; new rows are
-                # already populated by stream_reply and skip straight past this.
+                # already populated when written and skip straight past this.
                 m.content_html = render_markdown(m.content)
                 m.save(update_fields=['content_html'])
             html = m.content_html
@@ -188,6 +196,11 @@ def _rendered_messages(conversation):
             'role': m.role,
             'content': m.content,
             'content_html': html,
+            # Only meaningful on critiques, but the bubble reads both: without
+            # them a replayed critique loses its score badge and is labelled as
+            # a critique of the reply no matter which one it is.
+            'critique_of': m.critique_of,
+            'score': m.score,
         })
     return items
 
