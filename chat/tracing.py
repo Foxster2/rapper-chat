@@ -34,7 +34,10 @@ def init():
     .env file has populated the environment.
     """
     global _active
-    if _active or not is_configured():
+    if _active:
+        return
+    if not is_configured():
+        print('Langfuse tracing off: no LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY set')
         return
     try:
         from langfuse import Langfuse
@@ -61,6 +64,13 @@ def init():
         print(f'Langfuse: thread context propagation unavailable: {e}')
 
     _active = True
+    # Announced because the interesting failure is silent: keys issued by one
+    # region are rejected by another, the export fails on a background thread,
+    # and traces then simply never appear -- with nothing in the app or its logs
+    # saying why. One line at boot turns "where did my traces go" into a thing
+    # you can read off a deploy log. No keys are logged, only where they point.
+    print(f'Langfuse tracing on: {settings.LANGFUSE_BASE_URL} '
+          f'(environment: {settings.LANGFUSE_ENVIRONMENT})')
 
 
 class _NoopSpan:
