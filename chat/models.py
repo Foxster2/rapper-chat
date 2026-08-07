@@ -19,6 +19,22 @@ class Conversation(models.Model):
     def __str__(self):
         return f"{self.title} ({self.owner})"
 
+class MessageQuerySet(models.QuerySet):
+    def dialogue(self):
+        """Only the turns the conversation is actually made of.
+
+        Critiques are stored as messages so they keep their place in the
+        transcript and survive a reload, but they are commentary written around
+        an exchange rather than a part of it. So anything asking what was said,
+        or how far the conversation has got, has to leave them out -- which is
+        easy to forget, because it is only wrong once the evaluator is switched
+        on. Named here rather than spelled out at each call site for exactly
+        that reason: the one place that forgot to exclude them silently stopped
+        naming conversations.
+        """
+        return self.exclude(role='evaluator')
+
+
 class Message(models.Model):
     ROLE_CHOICES = (
         ('user', 'User'),
@@ -51,6 +67,8 @@ class Message(models.Model):
     # from "scored zero", which is a real verdict.
     score = models.PositiveSmallIntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    objects = MessageQuerySet.as_manager()
 
     class Meta:
         ordering = ['created_at']

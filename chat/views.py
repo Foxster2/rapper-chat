@@ -20,6 +20,7 @@ from polar_sdk.webhooks import WebhookVerificationError, WebhookUnknownTypeError
 
 from . import billing
 from . import evaluator
+from . import tracing
 from .models import Conversation, Message
 from .llm import build_agent, build_history, generate_title, RECURSION_LIMIT
 from .utils import render_markdown, sse_frame
@@ -58,8 +59,7 @@ def _recent_transcript(conversation, exclude_pk):
     Critiques are left out: the evaluator judging its own past output drifts,
     each round agreeing harder with the last.
     """
-    turns = [m for m in conversation.messages.all()
-             if m.role in ('user', 'assistant') and m.pk != exclude_pk]
+    turns = list(conversation.messages.dialogue().exclude(pk=exclude_pk))
 
     lines, budget = [], settings.CHAT_EVALUATOR_CONTEXT_TOTAL_CHARS
     # Newest first so the total budget is spent on the turns nearest the message
@@ -260,7 +260,7 @@ def _pane_response(request, conversation, refresh_list=False):
     # Excludes critiques: they are written around a turn, not as one, so a
     # conversation whose last row is a critique is still answered (or still
     # waiting) according to the turn before it.
-    last = conversation.messages.exclude(role='evaluator').last()
+    last = conversation.messages.dialogue().last()
     conversations = _user_conversations(request) if refresh_list else None
     active_id = conversation.id if refresh_list else None
     response = HttpResponse(render_component(request, 'chat-pane',
@@ -405,7 +405,7 @@ def stream_reply(request, conversation_id):
     # the most recent message is a user turn still awaiting an answer. Critiques
     # are excluded -- the prompt critique is written mid-stream, so counting it
     # would make a reconnect think the turn had already been answered.
-    last = conversation.messages.exclude(role='evaluator').last()
+    last = conversation.messages.dialogue().last()
     if last is None or last.role != 'user':
         return StreamingHttpResponse(sse_frame('done', ''), content_type='text/event-stream')
 
@@ -422,6 +422,30 @@ def stream_reply(request, conversation_id):
     transcript = _recent_transcript(conversation, exclude_pk=last.pk)
 
     def event_stream():
+        """The reply, wrapped in one Langfuse trace.
+
+        One trace per turn and one session per conversation: a conversation
+        never signals that it has ended, so a trace spanning one would stay open
+        indefinitely, while a turn always closes. The session id ties them back
+        together in Langfuse's session view.
+
+        The root span's input and output become the trace's, which is what the
+        traces table shows -- so they are the question and the finished reply,
+        not the internals of this generator.
+        """
+        with tracing.turn(
+            'chat-turn',
+            session_id=str(conversation.id),
+            user_id=request.clerk_user_id,
+            input=question,
+            # Tags are fixed at creation, which suits naming the feature a trace
+            # came from -- it separates answering a message from naming a
+            # conversation in dashboards, and both are known before either runs.
+            tags=['chat'],
+        ) as turn_span:
+            yield from _turn_events(turn_span)
+
+    def _turn_events(turn_span):
         collected = []
         # Whether a status line is currently on screen, so it is cleared exactly
         # once -- when the answer starts, when the run ends without one, or on
@@ -462,7 +486,15 @@ def stream_reply(request, conversation_id):
             stream = build_agent().stream(
                 {'messages': history},
                 stream_mode=['messages', 'updates'],
-                config={'recursion_limit': RECURSION_LIMIT},
+                config={
+                    'recursion_limit': RECURSION_LIMIT,
+                    # Nests the whole graph run -- every model call and every
+                    # web_search hop -- under the turn span opened above.
+                    'callbacks': tracing.callbacks(),
+                    # Otherwise the graph arrives named "LangGraph", which says
+                    # nothing about which of the app's three model calls it is.
+                    'run_name': 'reply-agent',
+                },
             )
             for mode, payload in stream:
                 if mode == 'updates':
@@ -514,6 +546,12 @@ def stream_reply(request, conversation_id):
             # Whatever it had already said is kept, so this falls through to the
             # normal persist path rather than being treated as a failure.
             print(f'Agent hit the {RECURSION_LIMIT}-step limit without answering')
+            # Not an error -- the turn still returns whatever the model said --
+            # but the one case worth being able to filter for, since it means
+            # the recursion limit, not the model, ended the reply.
+            turn_span.update(level='WARNING',
+                             status_message='hit the agent recursion limit',
+                             metadata={'recursion_limit_hit': True})
             yield sse_frame('status', '')
             collected.append(
                 '\n\n*I kept searching without reaching an answer — '
@@ -521,6 +559,11 @@ def stream_reply(request, conversation_id):
             )
         except Exception as e:
             print(f"LangChain/OpenRouter streaming error: {e}")
+            # Recorded explicitly because the exception is handled here rather
+            # than allowed to propagate, so the span would otherwise close as a
+            # success and this turn would not show up when filtering for errors.
+            turn_span.update(output={'error': str(e)}, level='ERROR',
+                             status_message=str(e))
             yield sse_frame('status', '')
             # The question was still worth critiquing even though answering it
             # failed, and the slot for it is already on the page.
@@ -548,6 +591,10 @@ def stream_reply(request, conversation_id):
         # back as an ordinary (if short) assistant turn.
         full = ''.join(collected)
         full_html = render_markdown(full) if full.strip() else STOPPED_EMPTY_HTML
+        # The reply as the trace's output. Set here rather than at the end of the
+        # generator so a turn the reader stopped early still records what was
+        # actually produced.
+        turn_span.update(output=full)
         Message.objects.create(conversation=conversation, role='assistant', content=full, content_html=full_html)
         conversation.stop_requested = False
         conversation.save(update_fields=['stop_requested', 'updated_at'])
@@ -595,11 +642,26 @@ def conversation_title(request, conversation_id):
     except Conversation.DoesNotExist:
         return HttpResponseNotFound('Conversation not found')
 
-    messages = list(conversation.messages.all()[:3])
-    if len(messages) != 2 or messages[0].role != 'user':
+    # One more turn than the opening exchange, so "the conversation has moved
+    # on" stays distinguishable from "this is still the first question and its
+    # answer" -- the latter being the only state this endpoint acts on.
+    turns = list(conversation.messages.dialogue()[:3])
+    if len(turns) != 2 or turns[0].role != 'user':
         return HttpResponse(status=204)
 
-    title = generate_title(messages[0].content, messages[1].content)
+    # Its own trace rather than part of the turn's: naming a chat is a separate
+    # request that lands after the reply has finished, so there is no turn left
+    # open to attach it to. The shared session id is what still files it under
+    # the conversation it named.
+    with tracing.turn(
+        'generate-title',
+        session_id=str(conversation.id),
+        user_id=request.clerk_user_id,
+        input=turns[0].content,
+        tags=['title'],
+    ) as span:
+        title = generate_title(turns[0].content, turns[1].content)
+        span.update(output=title)
     if not title:
         return HttpResponse(status=204)
 

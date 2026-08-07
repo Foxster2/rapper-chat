@@ -14,3 +14,7 @@ whitenoise
 dj-database-url
 psycopg2-binary
 polar-sdk
+langfuse
+# Propagates OpenTelemetry context into worker threads, so the prompt critique
+# evaluated on a ThreadPoolExecutor lands in the same trace as the reply.
+opentelemetry-instrumentation-threading

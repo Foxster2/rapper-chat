@@ -153,13 +153,20 @@ CLERK_PUBLISHABLE_KEY = os.getenv('CLERK_PUBLISHABLE_KEY')
 CLERK_JWKS_URL = os.getenv('CLERK_JWKS_URL')
 
 OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')
-OPENROUTER_MODEL = os.getenv('OPENROUTER_MODEL', 'meta-llama/llama-3.3-70b-instruct:free')
+OPENROUTER_MODEL = os.getenv('OPENROUTER_MODEL', 'google/gemini-2.5-flash-lite')
 # Chat titles are a short, throwaway call, so they run on their own small
 # instruction-tuned model rather than borrowing the chat one -- which may well be
 # a reasoning model, and those spend their budget thinking before they answer.
 # `or` rather than a getenv default: the key is present but blank in .env.example,
 # and an empty string would otherwise be taken as a real model name.
-OPENROUTER_TITLE_MODEL = os.getenv('OPENROUTER_TITLE_MODEL') or 'inclusionai/ling-3.0-flash:free'
+# The `:free` slug this used to point at is gone -- OpenRouter now answers it
+# with a 404 naming the paid model -- and a title is a few hundred tokens, so the
+# paid tier costs a rounding error per conversation. Which makes price close to
+# irrelevant in the choice: what separates models here is whether they return a
+# consistently cased three-to-six word phrase, since a sidebar of titles that
+# disagree about capitalisation reads as broken, and anything long or chatty is
+# thrown away by _clean_title and leaves the chat named "New Chat".
+OPENROUTER_TITLE_MODEL = os.getenv('OPENROUTER_TITLE_MODEL') or 'mistralai/mistral-nemo'
 
 def _int_env(name, default):
     """An integer setting from the environment, tolerant of a key that is present
@@ -184,9 +191,11 @@ CHAT_AGENT_RECURSION_LIMIT = _int_env('CHAT_AGENT_RECURSION_LIMIT', 8)
 CHAT_EVALUATOR_ENABLED = os.getenv('CHAT_EVALUATOR_ENABLED', 'true').lower() not in (
     '0', 'false', 'no', 'off')
 # Critiques are short and highly structured, so this follows the title model in
-# preferring a small fast non-reasoning model over the one answering the user.
+# preferring a non-reasoning model over the one answering the user. Not the
+# smallest one going, though: this one has to hold a scoring rubric and write a
+# usable critique, which is more than naming a chat asks for.
 OPENROUTER_EVALUATOR_MODEL = (
-    os.getenv('OPENROUTER_EVALUATOR_MODEL') or 'inclusionai/ling-3.0-flash:free')
+    os.getenv('OPENROUTER_EVALUATOR_MODEL') or 'meta-llama/llama-3.3-70b-instruct')
 
 # How much of the conversation each critique is shown. A critic that cannot see
 # what a follow-up refers to reports the answer as invented, so these are the
@@ -199,6 +208,24 @@ CHAT_EVALUATOR_CONTEXT_TOTAL_CHARS = _int_env('CHAT_EVALUATOR_CONTEXT_TOTAL_CHAR
 # critiques go missing: a reasoning model spends this budget thinking first, and
 # running out mid-thought returns an empty string rather than an error.
 CHAT_EVALUATOR_MAX_TOKENS = _int_env('CHAT_EVALUATOR_MAX_TOKENS', 1200)
+
+# Langfuse tracing (see chat/tracing.py). Entirely optional: with no keys set
+# nothing is sent anywhere and the app behaves exactly as it did before. Keys
+# come from the Langfuse project under Settings -> API Keys.
+LANGFUSE_PUBLIC_KEY = os.getenv('LANGFUSE_PUBLIC_KEY')
+LANGFUSE_SECRET_KEY = os.getenv('LANGFUSE_SECRET_KEY')
+# Region-specific, and not interchangeable: the EU, US and Japan clouds are
+# separate deployments, and a key pair only authenticates against the one it was
+# issued by. Defaults to EU, which is where a plain cloud.langfuse.com signup
+# lands.
+LANGFUSE_BASE_URL = os.getenv('LANGFUSE_BASE_URL') or 'https://cloud.langfuse.com'
+# Keeps traces from a laptop out of the dashboards that describe real traffic.
+# Derived from DEBUG rather than required, so local runs are labelled correctly
+# without anyone having to remember to set it.
+LANGFUSE_ENVIRONMENT = (
+    os.getenv('LANGFUSE_TRACING_ENVIRONMENT')
+    or ('development' if DEBUG else 'production')
+)
 
 # How much of a conversation is replayed to the model on each turn. The whole
 # history is re-sent every time, so left unbounded a conversation's input cost

@@ -11,6 +11,7 @@ import re
 from django.conf import settings
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from . import tracing
 from .llm import _chat_model
 
 # Asked for on its own first line so it can be parsed off deterministically.
@@ -96,6 +97,10 @@ def evaluate_prompt(question, transcript=''):
     return _evaluate(
         PROMPT_EVAL_SYSTEM,
         f"{material}The user's new message to evaluate:\n{_excerpt(question)}",
+        # Named for what is being judged rather than for the model doing it, so
+        # the name survives a change of evaluator model.
+        span_name='evaluate-prompt',
+        span_input=question,
     )
 
 
@@ -111,6 +116,8 @@ def evaluate_response(question, answer, transcript=''):
         RESPONSE_EVAL_SYSTEM,
         f"{material}The user then asked:\n{_excerpt(question)}\n\n"
         f"The assistant answered:\n{_excerpt(answer)}",
+        span_name='evaluate-response',
+        span_input=answer,
     )
 
 
@@ -121,31 +128,54 @@ def _excerpt(text):
     return text[:MAX_EXCERPT_CHARS].rstrip() + '\n[...truncated]'
 
 
-def _evaluate(system_prompt, user_content):
+def _evaluate(system_prompt, user_content, span_name, span_input):
     """One critique call. Returns (None, '') on any failure -- a missing critique
     is a missing sidebar note, while a raised exception here would take down the
-    reply the user is actually waiting for."""
+    reply the user is actually waiting for.
+
+    Traced as an `evaluator` observation rather than a plain span: Langfuse keys
+    its per-type analytics off the observation type, so this is what separates
+    the two critique calls from the reply in a cost breakdown -- which is the
+    number worth watching, since they are pure overhead on top of the answer the
+    user asked for.
+    """
     if not is_enabled():
         return None, ''
-    try:
-        raw = _chat_model(
-            settings.OPENROUTER_EVALUATOR_MODEL, temperature=0.2,
-            max_tokens=settings.CHAT_EVALUATOR_MAX_TOKENS,
-        ).invoke([
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=user_content),
-        ]).content
-    except Exception as e:
-        print(f'Evaluator call failed: {e}')
-        return None, ''
-    if not (raw or '').strip():
-        # Almost always a reasoning model exhausting MAX_TOKENS before it starts
-        # writing. Logged rather than swallowed: the symptom is a critique that
-        # intermittently does not appear, which is invisible from the outside.
-        print('Evaluator returned nothing -- raise CHAT_EVALUATOR_MAX_TOKENS '
-              f'(currently {settings.CHAT_EVALUATOR_MAX_TOKENS})')
-        return None, ''
-    return parse_critique(raw)
+    with tracing.span(span_name, as_type='evaluator', input=span_input) as span:
+        try:
+            raw = _chat_model(
+                settings.OPENROUTER_EVALUATOR_MODEL, temperature=0.2,
+                max_tokens=settings.CHAT_EVALUATOR_MAX_TOKENS,
+            ).invoke([
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_content),
+            ], config={
+                'callbacks': tracing.callbacks(),
+                # Without this every model call in the app arrives named
+                # "ChatOpenAI", which is the LangChain class rather than the job
+                # -- so the reply, the title and both critiques become
+                # indistinguishable in any dashboard that groups by name.
+                'run_name': f'{span_name}-model',
+            }).content
+        except Exception as e:
+            print(f'Evaluator call failed: {e}')
+            span.update(output={'error': str(e)})
+            return None, ''
+        if not (raw or '').strip():
+            # Almost always a reasoning model exhausting MAX_TOKENS before it
+            # starts writing. Logged rather than swallowed: the symptom is a
+            # critique that intermittently does not appear, which is invisible
+            # from the outside.
+            print('Evaluator returned nothing -- raise CHAT_EVALUATOR_MAX_TOKENS '
+                  f'(currently {settings.CHAT_EVALUATOR_MAX_TOKENS})')
+            span.update(output={'error': 'empty response'})
+            return None, ''
+        score, text = parse_critique(raw)
+        # The parsed pair rather than the raw reply: the score is the field worth
+        # scanning a list of critiques by, and the raw text is already on the
+        # generation nested inside this span.
+        span.update(output={'score': score, 'critique': text})
+        return score, text
 
 
 def parse_critique(raw):

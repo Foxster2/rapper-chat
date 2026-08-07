@@ -12,6 +12,7 @@ from langchain_core.messages import (
     HumanMessage, AIMessage, SystemMessage, trim_messages,
 )
 
+from . import tracing
 from .tools import web_search
 
 SYSTEM_PROMPT = (
@@ -189,7 +190,12 @@ def generate_title(question, answer):
         ).invoke([
             SystemMessage(content=TITLE_PROMPT),
             HumanMessage(content=f'User: {question[:500]}\n\nAssistant: {answer[:500]}'),
-        ]).content
+        ], config={
+            'callbacks': tracing.callbacks(),
+            # Named for the job rather than left as LangChain's "ChatOpenAI",
+            # which every model call in the app would otherwise share.
+            'run_name': 'generate-title-model',
+        }).content
     except Exception as e:
         print(f"Title generation failed: {e}")
         return ''
